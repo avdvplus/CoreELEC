@@ -17,8 +17,8 @@ PKG_PATCH_DIRS="$LINUX"
 
 case "$LINUX" in
   amlogic-4.9)
-    PKG_VERSION="fbde5213a244aba5b90787b54270a4278b7822af"
-    PKG_SHA256="48a0bb770b74591c1e19c86861428bc7bb409e288823c7b0443c79095bb86fe7"
+    PKG_VERSION="cbdec71c51c1d5df5cb3c21ec08a58e71dbc9f9c"
+    PKG_SHA256="a3d2003522b42ba157877c29b140bfb8c409ff8dfebf26129b1a6517108a4f1b"
     PKG_URL="https://github.com/avdvplus/linux-amlogic/archive/$PKG_VERSION.tar.gz"
     PKG_SOURCE_NAME="linux-$LINUX-$PKG_VERSION.tar.gz"
     PKG_DEPENDS_TARGET="$PKG_DEPENDS_TARGET aml-dtbtools:host"

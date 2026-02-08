@@ -1,8 +1,8 @@
-From 3e9595627bd969651042c6b240ad433f865e3759 Mon Sep 17 00:00:00 2001
+From 741c31c63220f965e182b6de1e4ffb7434408142 Mon Sep 17 00:00:00 2001
 From: tanio99 <tanio99@wolke7.net>
 Date: Tue, 31 Oct 2023 12:27:26 +0100
-Subject: [PATCH] MKV: added basic 'block addition mapping' support for 'mvcC'
- extradata
+Subject: [PATCH 2/2] MKV: added basic 'block addition mapping' support for
+ 'mvcC' extradata
 
 ---
  libavformat/internal.h    | 11 +++++++++++
@@ -11,10 +11,10 @@ Subject: [PATCH] MKV: added basic 'block addition mapping' support for 'mvcC'
  3 files changed, 62 insertions(+)
 
 diff --git a/libavformat/internal.h b/libavformat/internal.h
-index f575064..9070396 100644
+index 8e8971b..b20c685 100644
 --- a/libavformat/internal.h
 +++ b/libavformat/internal.h
-@@ -662,6 +662,17 @@ int ff_rename(const char *url_src, const char *url_dst, void *logctx);
+@@ -700,6 +700,17 @@ int ff_rename(const char *url_src, const char *url_dst, void *logctx);
   */
  int ff_alloc_extradata(AVCodecParameters *par, int size);
  
@@ -33,10 +33,10 @@ index f575064..9070396 100644
   * Copies the whilelists from one context to the other
   */
 diff --git a/libavformat/matroskadec.c b/libavformat/matroskadec.c
-index d582f56..1844010 100644
+index c8741ff..65a8b4c 100644
 --- a/libavformat/matroskadec.c
 +++ b/libavformat/matroskadec.c
-@@ -2373,6 +2373,28 @@ static int mkv_parse_dvcc_dvvc(AVFormatContext *s, AVStream *st, const MatroskaT
+@@ -2502,6 +2502,28 @@ static int mkv_parse_dvcc_dvvc(AVFormatContext *s, AVStream *st, const MatroskaT
      return ff_isom_parse_dvcc_dvvc(s, st, bin->data, bin->size);
  }
  
@@ -62,10 +62,10 @@ index d582f56..1844010 100644
 +    return 0;
 +}
 +
- static int mkv_parse_block_addition_mappings(AVFormatContext *s, AVStream *st, const MatroskaTrack *track)
+ static int mkv_parse_block_addition_mappings(AVFormatContext *s, AVStream *st, MatroskaTrack *track)
  {
      const EbmlList *mappings_list = &track->block_addition_mappings;
-@@ -2389,6 +2411,13 @@ static int mkv_parse_block_addition_mappings(AVFormatContext *s, AVStream *st, c
+@@ -2537,6 +2559,13 @@ static int mkv_parse_block_addition_mappings(AVFormatContext *s, AVStream *st, M
                  return ret;
  
              break;
@@ -78,12 +78,12 @@ index d582f56..1844010 100644
 +
          default:
              av_log(s, AV_LOG_DEBUG,
-                    "Unknown block additional mapping type 0x%"PRIx64", value %"PRIu64", name \"%s\"\n",
+                    "Unknown Block Addition Mapping type 0x%"PRIx64", value %"PRIu64", name \"%s\"\n",
 diff --git a/libavformat/utils.c b/libavformat/utils.c
-index cf4d68b..8af9220 100644
+index e9ded62..7127363 100644
 --- a/libavformat/utils.c
 +++ b/libavformat/utils.c
-@@ -253,6 +253,28 @@ int ff_alloc_extradata(AVCodecParameters *par, int size)
+@@ -242,6 +242,28 @@ int ff_alloc_extradata(AVCodecParameters *par, int size)
      return 0;
  }
  
@@ -113,5 +113,5 @@ index cf4d68b..8af9220 100644
  
  uint64_t ff_ntp_time(void)
 -- 
-2.34.1
+2.43.0
 

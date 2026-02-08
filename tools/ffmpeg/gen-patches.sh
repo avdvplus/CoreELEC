@@ -2,9 +2,9 @@
 
 # base ffmpeg version
 FFMPEG_REPO="git://source.ffmpeg.org/ffmpeg.git"
-FFMPEG_VERSION="n6.0.1"
+FFMPEG_VERSION="8.0.1"
 
-ALL_FEATURE_SETS="v4l2-drmprime v4l2-request libreelec rpi vf-deinterlace-v4l2m2m"
+ALL_FEATURE_SETS="v4l2-drmprime v4l2-request libreelec rpi vf-deinterlace-v4l2m2m postproc"
 
 if [ $# -eq 0 ]; then
   echo "usage: $0 all|featureset [githash]"
@@ -13,29 +13,42 @@ if [ $# -eq 0 ]; then
 fi
 
 FFMPEG_ROOT="$(pwd)"
-LE_ROOT="$(cd $(dirname $0)/../.. ; pwd)"
+LE_ROOT="$(
+  cd $(dirname $0)/../..
+  pwd
+)"
 
 create_patch() {
   FEATURE_SET="$1"
   REFTYPE="branch"
 
   BASE_REPO="${FFMPEG_REPO}"
-  BASE_VERSION="${FFMPEG_VERSION}"
+  BASE_VERSION="n${FFMPEG_VERSION}"
 
   PATCH_CREATE_DIFF="no"
 
   case "${FEATURE_SET}" in
-    v4l2-drmprime|v4l2-request|vf-deinterlace-v4l2m2m)
+    v4l2-request)
+      REPO="https://code.ffmpeg.org/Kwiboo/FFmpeg.git"
+      REFSPEC="${FEATURE_SET}-n${FFMPEG_VERSION}"
+      ;;
+    v4l2-drmprime | vf-deinterlace-v4l2m2m)
       REPO="https://github.com/jernejsk/FFmpeg"
-      REFSPEC="${FEATURE_SET}-${FFMPEG_VERSION}"
+      REFSPEC="${FEATURE_SET}-n${FFMPEG_VERSION}"
       ;;
     libreelec)
       REPO="https://github.com/LibreELEC/FFmpeg"
-      REFSPEC="6.0-libreelec-misc"
+      REFSPEC="libreelec-misc-n${FFMPEG_VERSION}"
       ;;
     rpi)
       REPO="https://github.com/jc-kynesim/rpi-ffmpeg"
-      REFSPEC="test/6.0.1/main"
+      REFSPEC="test/8.0.1/main"
+      PATCH_CREATE_DIFF="yes"
+      ;;
+    postproc)
+      REPO="https://github.com/michaelni/FFmpeg.git"
+      REFSPEC="sourceplugin-libpostproc-8.0"
+      PATCH_CREATE_DIFF="yes"
       ;;
     *)
       echo "illegal feature set ${FEATURE_SET}"
@@ -67,14 +80,14 @@ create_patch() {
 
   if [ "${PATCH_CREATE_DIFF}" = "yes" ]; then
     # create diff in case format-patch doesn't work, eg when we have non-linear history
-    git diff "${BASE_REV}..${REV}" > "${LE_ROOT}/${PATCH_FILE}"
+    git diff "${BASE_REV}..${REV}" >"${LE_ROOT}/${PATCH_FILE}"
   else
-    git format-patch --stdout --no-signature "${BASE_REV}..${REV}" > "${LE_ROOT}/${PATCH_FILE}"
+    git format-patch --stdout --no-signature "${BASE_REV}..${REV}" >"${LE_ROOT}/${PATCH_FILE}"
   fi
 
   MSG=$(mktemp)
 
-  cat << EOF > "${MSG}"
+  cat <<EOF >"${MSG}"
 ffmpeg: ${ACTION} ${FEATURE_SET} patch
 
 Patch created using revisions ${BASE_REV:0:7}..${REV:0:7}
