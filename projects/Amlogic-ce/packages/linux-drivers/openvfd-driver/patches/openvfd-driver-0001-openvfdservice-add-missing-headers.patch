@@ -1,0 +1,20 @@
+diff --git a/OpenVFDService.c b/OpenVFDService.c
+index 3f0f1a3..7f2a5a1 100644
+--- a/OpenVFDService.c
++++ b/OpenVFDService.c
+@@ -1,12 +1,16 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <stdbool.h>
++#include <string.h>
+ #include <fcntl.h>
+ #include <errno.h>
+ #include <time.h>
+ #include <sys/ioctl.h>
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <unistd.h>
+ #include <pthread.h>
+ #include <stdint.h>
+ #include <signal.h>
+ #include "driver/openvfd_drv.h"

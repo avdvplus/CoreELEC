@@ -3,8 +3,8 @@
 # Copyright (C) 2019-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="bluez"
-PKG_VERSION="5.75"
-PKG_SHA256="988cb3c4551f6e3a667708a578f5ca9f93fc896508f98f08709be4f8ab033c2f"
+PKG_VERSION="5.78"
+PKG_SHA256="830fed1915c5d375b8de0f5e6f45fcdea0dcc5ff5ffb3d31db6ed0f00d73c5e3"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.bluez.org/"
 PKG_URL="https://www.kernel.org/pub/linux/bluetooth/${PKG_NAME}-${PKG_VERSION}.tar.xz"
@@ -40,7 +40,7 @@ PKG_CONFIGURE_OPTS_TARGET="--disable-dependency-tracking \
                            storagedir=/storage/.cache/bluetooth"
 
 pre_configure_target() {
-# bluez fails to build in subdirs
+  # bluez fails to build in subdirs
   cd ${PKG_BUILD}
     rm -rf .${TARGET_NAME}
 
@@ -62,8 +62,8 @@ post_makeinstall_target() {
         -e "s|^#\[Policy\]|\[Policy\]|g" \
         -e "s|^#AutoEnable.*|AutoEnable=true|g" \
         -e "s|^#JustWorksRepairing.*|JustWorksRepairing=always|g"
-    echo "[General]" > ${INSTALL}/etc/bluetooth/input.conf
-    echo "ClassicBondedOnly=false" >> ${INSTALL}/etc/bluetooth/input.conf
+    echo "[General]" >${INSTALL}/etc/bluetooth/input.conf
+    echo "ClassicBondedOnly=false" >>${INSTALL}/etc/bluetooth/input.conf
 
   mkdir -p ${INSTALL}/usr/share/services
     cp -P ${PKG_DIR}/default.d/*.conf ${INSTALL}/usr/share/services
