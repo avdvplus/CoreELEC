@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tristan Stiller <stillertristan77@gmail.com>
+Date: Thu, 30 Apr 2026 22:51:00 -0500
+Subject: [PATCH] DVDVideoCodecAmlogic: reset DoVi start decode state on seek
+
+Amlogic DoVi streams can stall after seeking when the bitstream converter
+continues with stale start-decode state. The hardware decoder may never
+resume feeding frames, leaving playback stuck with a nearly full amstream
+buffer and invalid audio PTS.
+
+Handle Dolby Vision streams like H.264 on codec reset: keep the converter's
+RPU/SPS/PPS metadata cache intact, but require a fresh decode start after
+the discontinuity. This fixes FEL seek stalls without clearing the converter
+state needed for dual-layer DoVi playback.
+---
+ xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.cpp | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.cpp b/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.cpp
+index a4a7dc28a3..11be9b7f4a 100644
+--- a/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.cpp
++++ b/xbmc/cores/VideoPlayer/DVDCodecs/Video/DVDVideoCodecAmlogic.cpp
+@@ -688,8 +688,12 @@ void CDVDVideoCodecAmlogic::Reset(void)
+ 
+   m_mpeg2_sequence_pts = 0;
+   m_has_keyframe = false;
+-  if (m_bitstream && m_hints.codec == AV_CODEC_ID_H264)
+-    m_bitstream->ResetStartDecode();
++  if (m_bitstream &&
++      (m_hints.codec == AV_CODEC_ID_H264 ||
++       m_hints.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION ||
++       m_hints.dovi_el_type == DOVIELType::TYPE_FEL ||
++       m_hints.dovi_el_type == DOVIELType::TYPE_MEL))
++    m_bitstream->ResetStartDecode();
+ }
+ 
+ CDVDVideoCodec::VCReturn CDVDVideoCodecAmlogic::GetPicture(VideoPicture* pVideoPicture)
+-- 
+2.43.0
