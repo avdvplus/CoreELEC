@@ -90,10 +90,10 @@ BUG_REPORT_URL="https://github.com/avdvplus/CoreELEC"
 # Skins to install (Estuary)
 # Space separated list is supported,
 # e.g. SKINS="Estuary"
-  SKINS="Estuary"
+  SKINS="Estuary avdvplus.estuary"
 
 # Default Skin (Estuary)
-  SKIN_DEFAULT="Estuary"
+  SKIN_DEFAULT="avdvplus.estuary"
 
 # install extra subtitle Fonts for KODI (yes / no)
   KODI_EXTRA_FONTS="yes"
@@ -270,4 +270,4 @@ BUG_REPORT_URL="https://github.com/avdvplus/CoreELEC"
 # Space separated list is supported,
 # e.g. ADDITIONAL_PACKAGES="PACKAGE1 PACKAGE2"
   ADDITIONAL_PACKAGES="u-boot-script dtc CoreELEC-Debug-Scripts inject_bl301 ceemmc
-                       nfs-utils dtb-xml megatools"
+                       nfs-utils dtb-xml megatools htop binutils"

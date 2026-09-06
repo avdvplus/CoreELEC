@@ -487,6 +487,7 @@ setup_toolchain() {
       export CARGO_TARGET_DIR="${PKG_BUILD}/.${TARGET_NAME}/target"
       export CARGO_HOME="$(get_build_dir rust)/cargo_home"
       export RUST_TARGET_PATH="${TOOLCHAIN}/lib/rustlib/"
+      export RUST_TARGET_SPEC="${RUST_TARGET_PATH}${TARGET_NAME}.json"
 
       ;;
     host:*|bootstrap:*)
@@ -1463,6 +1464,9 @@ kernel_initramfs_confs() {
 kernel_make() {
   (
     setup_pkg_config_host
+
+    export KBUILD_BUILD_USER="avdvplus"
+    export KBUILD_BUILD_HOST="avdvplus"
 
     LDFLAGS="" make CROSS_COMPILE=$TARGET_KERNEL_PREFIX \
       ARCH="$TARGET_KERNEL_ARCH" \

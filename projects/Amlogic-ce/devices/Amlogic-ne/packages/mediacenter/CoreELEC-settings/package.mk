@@ -2,12 +2,12 @@
 # Copyright (C) 2022-present Team CoreELEC (https://coreelec.org)
 
 PKG_NAME="CoreELEC-settings"
-PKG_VERSION="a24cd5ad7068e101f8328f0514e2807427d6d6d5"
-PKG_SHA256="121c9f8bd24b2dcf258ade8caed63b32c2dfd8eaa9e42288cc5d01badaf122c0"
+PKG_VERSION="533453227da6930d7f192788c602a6a14553defa"
+PKG_SHA256="30556fbfc3083ca9004e985b1ea95ce1fd83576f7ff306adbfbb269b9d4ca947"
 PKG_LICENSE="GPL"
 PKG_SITE="https://coreelec.org"
-PKG_URL="https://github.com/CoreELEC/service.coreelec.settings/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain Python3 connman pygobject dbus-python"
+PKG_URL="https://github.com/avdvplus/service.coreelec.settings/archive/${PKG_VERSION}.tar.gz"
+PKG_DEPENDS_TARGET="toolchain Python3 connman dbussy"
 PKG_LONGDESC="CoreELEC-settings: is a settings dialog for CoreELEC"
 
 PKG_MAKE_OPTS_TARGET="DISTRONAME=${DISTRONAME} ADDON_VERSION=${ADDON_VERSION} ROOT_PASSWORD=${ROOT_PASSWORD}"

@@ -3,8 +3,8 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="ffmpeg"
-PKG_VERSION="8.0.1"
-PKG_SHA256="05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41"
+PKG_VERSION="8.1.2"
+PKG_SHA256="464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
 PKG_LICENSE="GPL-3.0-only"
 PKG_SITE="https://ffmpeg.org"
 PKG_URL="http://ffmpeg.org/releases/ffmpeg-${PKG_VERSION}.tar.xz"
@@ -32,7 +32,7 @@ case "${PROJECT}" in
         PKG_PATCH_DIRS+=" v4l2-request v4l2-drmprime vf-deinterlace-v4l2m2m"
         ;;
       RK356X|RK3576|RK3588)
-        PKG_PATCH_DIRS+=" detlev v4l2-request v4l2-drmprime vf-deinterlace-v4l2m2m"
+        PKG_PATCH_DIRS+=" v4l2-request detlev v4l2-drmprime vf-deinterlace-v4l2m2m"
         ;;
     esac
     ;;
@@ -185,7 +185,10 @@ configure_target() {
               --disable-hardcoded-tables \
               --disable-encoders \
               --enable-encoder=ac3 \
+              --enable-encoder=eac3 \
               --enable-encoder=aac \
+              --enable-encoder=aptx \
+              --enable-encoder=aptx_hd \
               --enable-encoder=wmav2 \
               --enable-encoder=mjpeg \
               --enable-encoder=png \

@@ -1,0 +1,161 @@
+#!/bin/sh
+
+DDC=/sys/kernel/debug/dynamic_debug/control
+LOGLEVEL_BACKUP=/run/log-axis.console_loglevel
+
+axis_decode_on() {
+    [ -e /sys/module/amvdec_h265/parameters/print_lcu_error ] && \
+        echo 1 > /sys/module/amvdec_h265/parameters/print_lcu_error
+    echo 'file ptsserv.c +p'         > "$DDC" 2>/dev/null
+}
+axis_decode_off() {
+    [ -e /sys/module/amvdec_h265/parameters/print_lcu_error ] && \
+        echo 0 > /sys/module/amvdec_h265/parameters/print_lcu_error
+    echo 'file ptsserv.c -p'         > "$DDC" 2>/dev/null
+}
+
+axis_dv_on() {
+    [ -e /sys/module/amdolby_vision/parameters/debug_dolby ] && \
+        echo 0x102 > /sys/module/amdolby_vision/parameters/debug_dolby
+    echo 'format "DOLBY:" +p'  > "$DDC" 2>/dev/null
+}
+axis_dv_off() {
+    [ -e /sys/module/amdolby_vision/parameters/debug_dolby ] && \
+        echo 0 > /sys/module/amdolby_vision/parameters/debug_dolby
+    echo 'format "DOLBY:" -p'  > "$DDC" 2>/dev/null
+}
+
+axis_display_on() {
+    [ -e /sys/module/dim/parameters/di_dbg ] && \
+        echo 0x20 > /sys/module/dim/parameters/di_dbg
+    echo 'format "dim:" +p'         > "$DDC" 2>/dev/null
+    echo 'module amhdmitx +p'       > "$DDC" 2>/dev/null
+    echo 'module videosync +p'      > "$DDC" 2>/dev/null
+}
+axis_display_off() {
+    [ -e /sys/module/dim/parameters/di_dbg ] && \
+        echo 0 > /sys/module/dim/parameters/di_dbg
+    echo 'format "dim:" -p'         > "$DDC" 2>/dev/null
+    echo 'module amhdmitx -p'       > "$DDC" 2>/dev/null
+    echo 'module videosync -p'      > "$DDC" 2>/dev/null
+}
+
+axis_audio_on() {
+    [ -e /sys/module/aml_audio/parameters/aml_audio_debug ] && \
+        echo 0xff > /sys/module/aml_audio/parameters/aml_audio_debug
+    echo 'format "AMLAUDIO:" +p'    > "$DDC" 2>/dev/null
+    echo 'module snd_soc_aml +p'    > "$DDC" 2>/dev/null
+}
+axis_audio_off() {
+    [ -e /sys/module/aml_audio/parameters/aml_audio_debug ] && \
+        echo 0 > /sys/module/aml_audio/parameters/aml_audio_debug
+    echo 'format "AMLAUDIO:" -p'    > "$DDC" 2>/dev/null
+    echo 'module snd_soc_aml -p'    > "$DDC" 2>/dev/null
+}
+
+axis_sync_on() {
+    echo 'module frame_sync +p'     > "$DDC" 2>/dev/null
+    echo 'format "[pts_kpi]" +p'    > "$DDC" 2>/dev/null
+    echo 'file ptsserv.c func pts_start +p' > "$DDC" 2>/dev/null
+    echo 'file ptsserv.c func pts_stop +p'  > "$DDC" 2>/dev/null
+}
+axis_sync_off() {
+    echo 'module frame_sync -p'     > "$DDC" 2>/dev/null
+    echo 'format "[pts_kpi]" -p'    > "$DDC" 2>/dev/null
+    echo 'file ptsserv.c func pts_start -p' > "$DDC" 2>/dev/null
+    echo 'file ptsserv.c func pts_stop -p'  > "$DDC" 2>/dev/null
+}
+
+console_throttle_on() {
+    if [ ! -f "$LOGLEVEL_BACKUP" ]; then
+        cut -d ' ' -f 1 /proc/sys/kernel/printk > "$LOGLEVEL_BACKUP" 2>/dev/null
+    fi
+    echo 0 > /proc/sys/kernel/printk 2>/dev/null
+}
+console_throttle_off() {
+    if [ -f "$LOGLEVEL_BACKUP" ]; then
+        cat "$LOGLEVEL_BACKUP" > /proc/sys/kernel/printk 2>/dev/null
+        rm -f "$LOGLEVEL_BACKUP"
+    else
+        echo 7 > /proc/sys/kernel/printk 2>/dev/null
+    fi
+}
+
+apply_axis() {
+    direction="$1"
+    axis="$2"
+    case "$axis" in
+        decode)  [ "$direction" = on ] && axis_decode_on  || axis_decode_off  ;;
+        dv)      [ "$direction" = on ] && axis_dv_on      || axis_dv_off      ;;
+        display) [ "$direction" = on ] && axis_display_on || axis_display_off ;;
+        audio)   [ "$direction" = on ] && axis_audio_on   || axis_audio_off   ;;
+        sync)    [ "$direction" = on ] && axis_sync_on    || axis_sync_off    ;;
+        *) echo "log-axis: unknown axis '$axis'" >&2 ; return 1 ;;
+    esac
+}
+
+cmd_on() {
+    if [ $# -eq 0 ]; then
+        echo "log-axis: 'on' requires at least one axis" >&2
+        echo "  Available: decode dv display audio sync" >&2
+        exit 1
+    fi
+    console_throttle_on
+    for axis in "$@"; do
+        apply_axis on "$axis" || exit 1
+    done
+    echo "log-axis: enabled $* (console_loglevel=0)"
+    echo "log-axis: capture via journalctl -k or /storage/.kodi/temp/kernel.log; revert with 'log-axis off'"
+}
+
+cmd_off() {
+    if [ $# -eq 0 ]; then
+        for axis in decode dv display audio sync; do
+            apply_axis off "$axis"
+        done
+        console_throttle_off
+        echo "log-axis: all axes disabled, console_loglevel restored"
+    else
+        for axis in "$@"; do
+            apply_axis off "$axis" || exit 1
+        done
+        echo "log-axis: disabled $*"
+    fi
+}
+
+cmd_status() {
+    echo "log-axis status:"
+    echo "  console_loglevel: $(cut -d ' ' -f 1 /proc/sys/kernel/printk 2>/dev/null)"
+    [ -f "$LOGLEVEL_BACKUP" ] && echo "  (saved loglevel: $(cat "$LOGLEVEL_BACKUP"))"
+    echo "  debug_dolby: $(cat /sys/module/amdolby_vision/parameters/debug_dolby 2>/dev/null || echo n/a)"
+    echo "  di_dbg:      $(cat /sys/module/dim/parameters/di_dbg 2>/dev/null || echo n/a)"
+    echo "  print_lcu_error: $(cat /sys/module/amvdec_h265/parameters/print_lcu_error 2>/dev/null || echo n/a)"
+    echo "  aml_audio_debug: $(cat /sys/module/aml_audio/parameters/aml_audio_debug 2>/dev/null || echo n/a)"
+    echo
+    echo "  active dynamic_debug entries (=p):"
+    grep -E '=p\s' "$DDC" 2>/dev/null | wc -l | awk '{print "    " $1 " lines"}'
+    echo "  format-prefix matches:"
+    for prefix in "DOLBY:" "dim:" "AMLAUDIO:" "[h265]" "[h264]" "[vp9]" "[av1]" "[pts_kpi]"; do
+        c=$(grep -F "format=\"$prefix" "$DDC" 2>/dev/null | grep -c '=p ')
+        [ "$c" -gt 0 ] && printf "    %-12s %d active\n" "$prefix" "$c"
+    done
+}
+
+case "$1" in
+    on)      shift; cmd_on  "$@" ;;
+    off)     shift; cmd_off "$@" ;;
+    status)  cmd_status ;;
+    *)
+        cat <<USAGE
+log-axis
+
+Usage:
+  log-axis on  AXIS [AXIS...]
+  log-axis off [AXIS [AXIS...]]
+  log-axis status
+
+Axes: decode dv display audio sync
+USAGE
+        [ -n "$1" ] && exit 1 || exit 0
+        ;;
+esac

@@ -1,0 +1,35 @@
+--- a/src/bootstrap/src/utils/cc_detect.rs
++++ b/src/bootstrap/src/utils/cc_detect.rs
+@@ -31,6 +31,23 @@
+ 
+ /// Creates and configures a new [`cc::Build`] instance for the given target.
+ fn new_cc_build(build: &Build, target: TargetSelection) -> cc::Build {
++    // Rust distributions like CoreELEC/LibreELEC use custom target triples (e.g.
++    // `aarch64-libreelec-linux-gnu`). Rust bootstrap uses `cc-rs` as a *library*
++    // (not as a Cargo build script), and `cc-rs` intentionally rejects unknown
++    // target triples in that mode.
++    //
++    // For compiler *detection only*, normalize our custom vendor to the upstream
++    // `unknown` vendor so `cc-rs` can parse it. We keep the original triple for
++    // everything else in bootstrap (and we still pass the JSON target spec to
++    // rustc via `TargetSelection::rustc_target_arg()`).
++    let normalized_target = match &*target.triple {
++        t if t.ends_with("-libreelec-linux-gnu") => t.replacen("-libreelec-", "-unknown-", 1),
++        t if t.ends_with("-libreelec-linux-gnueabihf") => {
++            t.replacen("-libreelec-", "-unknown-", 1)
++        }
++        t => t.to_string(),
++    };
++
+     let mut cfg = cc::Build::new();
+     cfg.cargo_metadata(false)
+         .opt_level(2)
+@@ -38,7 +55,7 @@
+         .debug(false)
+         // Compress debuginfo
+         .flag_if_supported("-gz")
+-        .target(&target.triple)
++        .target(&normalized_target)
+         .host(&build.host_target.triple);
+     match build.crt_static(target) {
+         Some(a) => {

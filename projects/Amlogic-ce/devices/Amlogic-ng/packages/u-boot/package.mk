@@ -11,7 +11,7 @@ PKG_LONGDESC="Das U-Boot is a cross-platform bootloader for embedded systems."
 PKG_TOOLCHAIN="manual"
 
 PKG_CANUPDATE="${PROJECT}*"
-PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader "
+PKG_NEED_UNPACK="$PROJECT_DIR/$PROJECT/bootloader $PROJECT_DIR/$PROJECT/devices/$DEVICE/bootloader "
 
 for PKG_SUBDEVICE in $SUBDEVICES; do
   if [ "${PKG_SUBDEVICE}" != "Odroid_HC4" ]; then

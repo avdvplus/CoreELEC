@@ -1,0 +1,21 @@
+diff --git a/src/libcec/implementations/CECCommandHandler.cpp b/src/libcec/implementations/CECCommandHandler.cpp
+index 2d92622..4ad2dc7 100644
+--- a/src/libcec/implementations/CECCommandHandler.cpp
++++ b/src/libcec/implementations/CECCommandHandler.cpp
+@@ -907,7 +907,16 @@ bool CCECCommandHandler::TransmitSetStreamPath(const cec_logical_address iIniti
+ bool CCECCommandHandler::PowerOn(const cec_logical_address iInitiator, const cec_logical_address iDestination)
+ {
+   if (iDestination == CECDEVICE_TV)
++  {
++    CCECBusDevice* tv = m_processor->GetDevice(iDestination);
++    if (tv && tv->IsUnsupportedFeature(CEC_OPCODE_IMAGE_VIEW_ON))
++    {
++      return TransmitKeypress(iInitiator, iDestination, CEC_USER_CONTROL_CODE_POWER_ON_FUNCTION) &&
++        TransmitKeyRelease(iInitiator, iDestination);
++    }
++
+     return TransmitImageViewOn(iInitiator, iDestination);
++  }
+ 
+   return TransmitKeypress(iInitiator, iDestination, CEC_USER_CONTROL_CODE_POWER) &&
+     TransmitKeyRelease(iInitiator, iDestination);

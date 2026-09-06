@@ -1,0 +1,64 @@
+#!/bin/sh
+set -e
+
+GUISETTINGS=/storage/.kodi/userdata/guisettings.xml
+STAMP_DIR=/storage/.cache
+STAMP=${STAMP_DIR}/skin-avdvplus-migration.stamp
+LOG=/storage/skin-avdvplus-migration.log
+LOG_ROTATED=/storage/skin-avdvplus-migration.1.log
+LOG_MAX_BYTES=262144
+SYS_SKIN=/usr/share/kodi/addons/skin.avdvplus.estuary
+USR_SKIN=/storage/.kodi/addons/skin.avdvplus.estuary
+
+[ -f /etc/os-release ] || exit 0
+. /etc/os-release
+[ -n "${BUILD_ID}" ] || exit 0
+
+if [ -f "${STAMP}" ] && [ "$(cat ${STAMP} 2>/dev/null)" = "${BUILD_ID}" ]; then
+  exit 0
+fi
+
+rotate_log() {
+  if [ -f "$LOG" ]; then
+    size=$(wc -c < "$LOG" 2>/dev/null) || size=""
+    if [ -n "$size" ] && [ "$size" -gt "$LOG_MAX_BYTES" ] 2>/dev/null; then
+      mv -f "$LOG" "$LOG_ROTATED" 2>/dev/null || true
+    fi
+  fi
+  return 0
+}
+
+rotate_log
+mkdir -p "${STAMP_DIR}" || true
+
+if [ -d "${SYS_SKIN}" ] && [ -d "${USR_SKIN}" ]; then
+  SYS_VER=$(sed -n 's:.*<addon[^>]* version="\([^"]*\)".*:\1:p' "${SYS_SKIN}/addon.xml" 2>/dev/null | head -1)
+  USR_VER=$(sed -n 's:.*<addon[^>]* version="\([^"]*\)".*:\1:p' "${USR_SKIN}/addon.xml" 2>/dev/null | head -1)
+  if [ -n "${SYS_VER}" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') removing userdata skin v${USR_VER:-unknown} (image v${SYS_VER} is canonical for built-in skin; build ${BUILD_ID})" >> "${LOG}" || true
+    rm -rf "${USR_SKIN}"
+  fi
+fi
+
+if [ ! -f "${GUISETTINGS}" ]; then
+  echo "${BUILD_ID}" > "${STAMP}" || true
+  exit 0
+fi
+
+CURRENT_SKIN=$(sed -n 's:.*<setting id="lookandfeel.skin"[^>]*>\([^<]*\)</setting>.*:\1:p' "${GUISETTINGS}" | head -1)
+if [ -z "${CURRENT_SKIN}" ]; then
+  echo "${BUILD_ID}" > "${STAMP}" || true
+  exit 0
+fi
+
+if [ "${CURRENT_SKIN}" = "skin.estuary" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') migrating skin.estuary -> skin.avdvplus.estuary (build ${BUILD_ID})" >> "${LOG}" || true
+  sed -i 's:<setting id="lookandfeel.skin"[^>]*>skin.estuary</setting>:<setting id="lookandfeel.skin" default="false">skin.avdvplus.estuary</setting>:' "${GUISETTINGS}"
+elif [ "${CURRENT_SKIN}" = "skin.avdvplus.estuary" ]; then
+  echo "$(date '+%Y-%m-%d %H:%M:%S') no migration needed; user already on skin.avdvplus.estuary (build ${BUILD_ID})" >> "${LOG}" || true
+else
+  echo "$(date '+%Y-%m-%d %H:%M:%S') no migration; respecting user choice of ${CURRENT_SKIN} (build ${BUILD_ID})" >> "${LOG}" || true
+fi
+
+echo "${BUILD_ID}" > "${STAMP}" || true
+exit 0

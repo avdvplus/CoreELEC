@@ -1,0 +1,13 @@
+diff --git a/inputstream.ffmpegdirect/addon.xml.in b/inputstream.ffmpegdirect/addon.xml.in
+index 6033a87..372ea13 100644
+--- a/inputstream.ffmpegdirect/addon.xml.in
++++ b/inputstream.ffmpegdirect/addon.xml.in
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <addon
+   id="inputstream.ffmpegdirect"
+-  version="21.3.8"
++  version="21.3.8.99"
+   name="Inputstream FFmpeg Direct"
+   provider-name="Ross Nicholson">
+   <requires>@ADDON_DEPENDS@</requires>

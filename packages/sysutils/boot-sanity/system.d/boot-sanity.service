@@ -1,0 +1,10 @@
+[Unit]
+Description=Post-boot storage and memory sanity log
+After=kodi.service
+ConditionPathExists=/storage/.config/boot-sanity.enable
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/coreelec/boot-sanity.sh
+Nice=19
+IOSchedulingClass=idle

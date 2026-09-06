@@ -1,0 +1,16 @@
+[Unit]
+Description=Kodi RAM userdata playback-boundary sync watcher
+ConditionPathIsMountPoint=/run/kodi-data-rw
+After=kodi-data-ram-setup.service
+Requires=kodi-data-ram-setup.service
+
+[Service]
+Type=simple
+Nice=15
+IOSchedulingClass=idle
+ExecStart=/usr/lib/coreelec/kodi-data-ram-watch.sh
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=kodi.service

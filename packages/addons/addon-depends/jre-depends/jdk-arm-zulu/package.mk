@@ -16,4 +16,9 @@ post_unpack() {
   # libbluray needs arm/server
   mv ${PKG_BUILD}/jre/lib/aarch32    ${PKG_BUILD}/jre/lib/arm
   mv ${PKG_BUILD}/jre/lib/arm/client ${PKG_BUILD}/jre/lib/arm/server
+
+  ln -s arm    ${PKG_BUILD}/jre/lib/aarch32
+  ln -s server ${PKG_BUILD}/jre/lib/arm/client
+
+  chmod -R +x ${PKG_BUILD}/jre/bin
 }

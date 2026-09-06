@@ -1,0 +1,12 @@
+[Unit]
+Description=Debug capture: persist kernel messages and arm configured debug settings
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/debug-capture
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

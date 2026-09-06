@@ -1,0 +1,5 @@
+Rename this file to boot-sanity.enable to write a post-boot storage and
+memory sanity report to the kernel log 90 seconds after each boot. It is off
+by default so a normal install produces no extra logging.
+
+  mv /storage/.config/boot-sanity.enable.sample /storage/.config/boot-sanity.enable

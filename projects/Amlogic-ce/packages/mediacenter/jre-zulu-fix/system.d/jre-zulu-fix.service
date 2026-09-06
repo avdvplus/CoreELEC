@@ -1,0 +1,11 @@
+[Unit]
+Description=BD-J Java runtime addon self-heal
+Before=kodi.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/coreelec/jre-zulu-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=kodi.service

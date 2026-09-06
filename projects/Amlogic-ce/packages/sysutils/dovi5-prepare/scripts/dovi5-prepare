@@ -1,0 +1,324 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+CONF_SYS=/etc/dovi5.conf
+CONF_USER=/storage/.config/dovi5.conf
+ENABLE=yes
+
+SEARCH="/storage/.config/dovi5.ko /flash/dovi5.ko /storage/dovi5.ko"
+STATE_DIR=/storage/.dovi5
+OUTPUT=${STATE_DIR}/dovi5.ko
+STAMP=${STATE_DIR}/state
+LOCK=/run/dovi5-prepare.lock
+LEGACY_STAMP=/storage/.config/.dovi5.ko_deployed
+PATHFILE=/run/dovi5-path
+MARKER=/run/dovi5-notify
+LOG=/storage/dovi5.log
+LOG_ROTATED=/storage/dovi5.1.log
+LOG_MAX_BYTES=262144
+PATCHER=/usr/lib/coreelec/dv5-patch-dovi.py
+KSYMS=/proc/kallsyms
+SHIM_SHA=""
+LOCK_HELD=no
+KEEP_MARKER=no
+WORK=""
+
+log_is_safe() {
+  [ -L "$LOG" ] && return 1
+  [ -e "$LOG" ] && [ ! -f "$LOG" ] && return 1
+  return 0
+}
+
+rotate_log() {
+  log_is_safe || return 0
+  if [ -f "$LOG" ]; then
+    size=$(wc -c < "$LOG" 2>/dev/null) || size=""
+    if [ -n "$size" ] && [ "$size" -gt "$LOG_MAX_BYTES" ] 2>/dev/null; then
+      mv -f "$LOG" "$LOG_ROTATED" 2>/dev/null || true
+    fi
+  fi
+  return 0
+}
+
+log() {
+  rotate_log
+  if log_is_safe; then
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG" 2>/dev/null || true
+  fi
+  echo "dovi5-prepare: $1" >&2
+  return 0
+}
+
+log_block() {
+  [ -n "$1" ] || return 0
+  if log_is_safe; then
+    printf '%s\n' "$1" >> "$LOG" 2>/dev/null || true
+  fi
+  printf '%s\n' "$1" >&2
+  return 0
+}
+
+load_conf() {
+  [ -f "$1" ] || return 0
+  [ -r "$1" ] || return 0
+  v=$(head -c 65536 "$1" 2>/dev/null | sed -n 's/^[[:space:]]*ENABLE[[:space:]]*=[[:space:]]*"\{0,1\}'"'"'\{0,1\}\([A-Za-z]*\).*/\1/p' | tail -1)
+  [ -n "$v" ] && ENABLE=$v
+  return 0
+}
+
+load_conf "$CONF_SYS"
+load_conf "$CONF_USER"
+
+case "$ENABLE" in
+  yes|no) ;;
+  *) ENABLE_BAD="$ENABLE"; ENABLE=yes ;;
+esac
+
+notify() {
+  KEEP_MARKER=yes
+  [ "$ENABLE" = "yes" ] || return 0
+  printf '%s\n' "$1" > "$MARKER" 2>/dev/null || true
+  return 0
+}
+
+sha() {
+  sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+}
+
+cleanup() {
+  [ -n "$WORK" ] && rm -f "$WORK" 2>/dev/null
+  [ "$LOCK_HELD" = "yes" ] && rmdir "$LOCK" 2>/dev/null
+  return 0
+}
+
+trap 'cleanup' EXIT
+trap 'cleanup; exit 1' INT TERM HUP
+
+publish() {
+  if { echo "$1" > "$PATHFILE"; } 2>/dev/null; then
+    [ "$KEEP_MARKER" = "yes" ] || rm -f "$MARKER" 2>/dev/null
+    return 0
+  fi
+  rm -f "$PATHFILE" 2>/dev/null
+  log "WARNING cannot write ${PATHFILE}; the loader will not load ${OUTPUT} this boot"
+  return 1
+}
+
+publish_existing() {
+  [ -f "$OUTPUT" ] || return 1
+  [ -L "$OUTPUT" ] && return 1
+  [ -f "$STAMP" ] || return 1
+  read -r _s want_shim want_out < "$STAMP" 2>/dev/null || return 1
+  [ -n "$want_out" ] || return 1
+  [ "$(sha "$OUTPUT")" = "$want_out" ] || return 1
+  if [ -n "$want_shim" ] && [ "$SHIM_SHA" != "$want_shim" ]; then
+    log "${OUTPUT} was prepared for a different dv_compat_shim; not loading it"
+    return 1
+  fi
+  publish "$OUTPUT"
+}
+
+if [ -L "$STATE_DIR" ]; then
+  log "${STATE_DIR} is a symlink; refusing to use it"
+  notify blocked
+  exit 0
+fi
+
+SHIM=$(modinfo -n dv_compat_shim 2>/dev/null)
+[ -f "$SHIM" ] || SHIM=$(ls /usr/lib/kernel-overlays/*/lib/modules/*/kernel/drivers/amlogic/media/enhancement/amdolby_vision/dv_compat_shim.ko 2>/dev/null | head -1)
+[ -f "$SHIM" ] && SHIM_SHA=$(sha "$SHIM")
+
+
+if ! mkdir -p "$STATE_DIR" 2>/dev/null || [ ! -w "$STATE_DIR" ]; then
+  log "cannot write ${STATE_DIR}; /storage may be read-only or full"
+  publish_existing && log "keeping the previously prepared ${OUTPUT}"
+  notify blocked
+  exit 0
+fi
+
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if [ -d "$LOCK" ]; then
+    log "another dovi5-prepare run holds ${LOCK}; skipping this invocation"
+  else
+    log "cannot create ${LOCK}; skipping this invocation"
+    notify blocked
+  fi
+  publish_existing
+  exit 0
+fi
+LOCK_HELD=yes
+
+rm -f "${STATE_DIR}"/work.* "${STATE_DIR}"/patch.* 2>/dev/null
+
+[ -n "$ENABLE_BAD" ] && log "ENABLE='${ENABLE_BAD}' is not yes or no; treating it as yes"
+
+if [ -f "$LEGACY_STAMP" ]; then
+  rm -f "$LEGACY_STAMP" 2>/dev/null
+  [ -e "$LEGACY_STAMP" ] ||
+    log "removed the obsolete deploy stamp ${LEGACY_STAMP}; no dovi5.ko was deleted"
+fi
+
+if [ ! -x "$PATCHER" ] || ! command -v python3 >/dev/null 2>&1; then
+  log "patcher or python3 missing (packaging fault not your blob)"
+  publish_existing && log "keeping the previously prepared ${OUTPUT}"
+  notify blocked
+  exit 0
+fi
+
+if [ -z "$SHIM_SHA" ]; then
+  log "dv_compat_shim.ko not found; cannot validate any dovi5.ko"
+  publish_existing && log "keeping the previously prepared ${OUTPUT}"
+  notify blocked
+  exit 0
+fi
+
+OUT_REAL=$(readlink -f "$OUTPUT" 2>/dev/null || echo "$OUTPUT")
+OUT_LINKED_SRC=""
+for p in $SEARCH; do
+  [ -e "$p" ] || continue
+  if [ "$(readlink -f "$p" 2>/dev/null || echo "$p")" = "$OUT_REAL" ]; then
+    OUT_LINKED_SRC=$p
+  fi
+done
+
+FOUND=no
+for p in $SEARCH; do
+  [ -f "$p" ] && FOUND=yes
+done
+if [ "$FOUND" = "no" ]; then
+  if publish_existing; then
+    log "no dovi5.ko in /storage/.config /flash or /storage; loading the previously prepared ${OUTPUT}"
+    exit 0
+  fi
+  log "no dovi5.ko found in /storage/.config /flash or /storage; Dolby Vision will be unavailable"
+  rm -f "$PATHFILE" 2>/dev/null
+  notify missing
+  exit 0
+fi
+
+ST_SRC=""; ST_SHIM=""; ST_OUT=""
+[ -f "$STAMP" ] && read -r ST_SRC ST_SHIM ST_OUT < "$STAMP" 2>/dev/null
+
+for p in $SEARCH; do
+  [ -f "$p" ] || continue
+  CUR=$(sha "$p")
+  [ -n "$CUR" ] || { log "cannot read $p; trying the next location"; continue; }
+
+  if [ "$CUR" = "$ST_SRC" ] && [ "$SHIM_SHA" = "$ST_SHIM" ] && [ -f "$OUTPUT" ] &&
+     [ ! -L "$OUTPUT" ] && [ "$(sha "$OUTPUT")" = "$ST_OUT" ]; then
+    if publish "$OUTPUT"; then
+      log "$p unchanged and already prepared for this shim; loading ${OUTPUT}"
+    else
+      notify blocked
+    fi
+    exit 0
+  fi
+
+  OUT=$(python3 "$PATCHER" check "$p" --ref "$SHIM" --ksyms "$KSYMS" 2>&1)
+  RC=$?
+  STATUS=$(echo "$OUT" | sed -n 's/^STATUS=//p')
+  REASON=$(echo "$OUT" | sed -n 's/^REASON=//p')
+  echo "$OUT" | grep -q 'link check skipped' &&
+    log "WARNING kernel symbol list unusable; the link check was SKIPPED this boot"
+
+  case "$RC" in
+    0) ;;
+    2|3)
+      log "$p rejected (${STATUS:-rc=$RC}): ${REASON:-no reason given}; trying the next location"
+      continue
+      ;;
+    *)
+      log "cannot check $p: the patcher failed with rc=$RC (an environment fault not your blob)"
+      log_block "$OUT"
+      publish_existing && log "keeping the previously prepared ${OUTPUT}"
+      notify blocked
+      exit 0
+      ;;
+  esac
+
+  if [ "$ENABLE" != "yes" ]; then
+    log "$p is usable but ENABLE=no in ${CONF_USER}; not preparing it"
+    publish_existing && log "loading the previously prepared ${OUTPUT}"
+    exit 0
+  fi
+
+  WORK=${STATE_DIR}/work.$$.ko
+  rm -f "$WORK" 2>/dev/null
+
+  if [ "$STATUS" = "patched" ]; then
+    cp "$p" "$WORK" 2>/dev/null
+    sync
+    if [ "$(sha "$WORK")" != "$CUR" ]; then
+      log "could not copy $p into ${STATE_DIR}; trying the next location"
+      rm -f "$WORK" 2>/dev/null
+      continue
+    fi
+    log_block "$OUT"
+    ACTION="copied (already patched)"
+  else
+    ERR=${STATE_DIR}/patch.$$.err
+    python3 "$PATCHER" patch "$p" "$WORK" --ref "$SHIM" --ksyms "$KSYMS" >"$ERR" 2>&1
+    PRC=$?
+    log_block "$(cat "$ERR" 2>/dev/null)"
+    rm -f "$ERR" 2>/dev/null
+    if [ "$PRC" != "0" ]; then
+      case "$PRC" in
+        2|3) log "patch of $p failed validation (rc=$PRC); trying the next location" ;;
+        *)
+          log "the patcher could not run (rc=$PRC); an environment fault not your blob"
+          rm -f "$WORK" 2>/dev/null
+          publish_existing && log "keeping the previously prepared ${OUTPUT}"
+          notify blocked
+          exit 0
+          ;;
+      esac
+      rm -f "$WORK" 2>/dev/null
+      continue
+    fi
+    ACTION="patched"
+  fi
+
+  OUT_WAS_HARDLINKED=no
+  if [ -f "$OUTPUT" ] && [ "$(stat -c %h "$OUTPUT" 2>/dev/null || echo 1)" != "1" ]; then
+    OUT_WAS_HARDLINKED=yes
+  fi
+
+  if [ -d "$OUTPUT" ]; then
+    log "${OUTPUT} is a directory; refusing to install over it"
+    rm -f "$WORK" 2>/dev/null
+    notify blocked
+    exit 0
+  fi
+
+  if ! mv -f "$WORK" "$OUTPUT" 2>/dev/null; then
+    log "cannot install ${OUTPUT}; trying the next location"
+    rm -f "$WORK" 2>/dev/null
+    continue
+  fi
+  sync
+  WORK=""
+  [ -n "$OUT_LINKED_SRC" ] &&
+    log "${OUTPUT} resolves to the source $OUT_LINKED_SRC; replacing that link, your file is untouched"
+  [ "$OUT_WAS_HARDLINKED" = "yes" ] &&
+    log "${OUTPUT} is hard-linked to another file; replacing the link, your file is untouched"
+  NEW=$(sha "$OUTPUT")
+  printf '%s %s %s\n' "$CUR" "$SHIM_SHA" "$NEW" > "$STAMP" 2>/dev/null || true
+  sync
+  publish "$OUTPUT" || notify blocked
+  log "$ACTION $p into ${OUTPUT}; your file was not modified"
+  for q in $SEARCH; do
+    [ "$q" = "$p" ] && continue
+    [ -e "$q" ] && log "note: $q is also present but $p was used"
+  done
+  exit 0
+done
+
+log "no usable dovi5.ko in any location"
+if publish_existing; then
+  log "loading the previously prepared ${OUTPUT} instead"
+  notify stale
+  exit 0
+fi
+rm -f "$PATHFILE" 2>/dev/null
+notify invalid
+exit 0

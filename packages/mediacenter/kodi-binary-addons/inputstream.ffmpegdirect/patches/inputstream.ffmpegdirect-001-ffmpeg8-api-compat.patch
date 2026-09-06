@@ -1,0 +1,417 @@
+diff --git a/src/stream/DemuxStream.cpp b/src/stream/DemuxStream.cpp
+index 942fc56..63de6c1 100644
+--- a/src/stream/DemuxStream.cpp
++++ b/src/stream/DemuxStream.cpp
+@@ -46,7 +46,7 @@ bool DemuxStream::GetInformation(kodi::addon::InputstreamInfo& info)
+   info.SetFlags(flags);
+   info.SetName(name);
+   info.SetCodecName(codecName);
+-  info.SetCodecProfile(static_cast<STREAMCODEC_PROFILE>(profile));
++  info.SetCodecProfile(ConvertToInputStreamProfile(codec, profile));
+   info.SetPhysicalIndex(uniqueId);
+   info.SetExtraData(extraData.GetData(), extraData.GetSize());
+   info.SetLanguage(language);
+@@ -60,6 +60,42 @@ bool DemuxStream::GetInformation(kodi::addon::InputstreamInfo& info)
+   return true;
+ }
+ 
++STREAMCODEC_PROFILE DemuxStream::ConvertToInputStreamProfile(AVCodecID codec, int profile)
++{
++  // https://github.com/xbmc/xbmc/blob/1dbab77181398ce816ea81d17d5159288fb97814/xbmc/addons/kodi-dev-kit/include/kodi/c-api/addon-instance/inputstream/stream_codec.h#L24
++  // https://github.com/xbmc/xbmc/blob/1dbab77181398ce816ea81d17d5159288fb97814/xbmc/cores/VideoPlayer/DVDInputStreams/InputStreamAddon.cpp#L760
++  switch (codec) {
++    case AV_CODEC_ID_AAC:
++      [[fallthrough]];
++    case AV_CODEC_ID_AAC_LATM:
++      switch (profile) {
++        case AV_PROFILE_AAC_MAIN:
++          return AACCodecProfileMAIN;
++        case AV_PROFILE_AAC_LOW:
++          return AACCodecProfileLOW;
++        case AV_PROFILE_AAC_SSR:
++          return AACCodecProfileSSR;
++        case AV_PROFILE_AAC_LTP:
++          return AACCodecProfileLTP;
++        case AV_PROFILE_AAC_HE:
++          return AACCodecProfileHE;
++        case AV_PROFILE_AAC_HE_V2:
++          return AACCodecProfileHEV2;
++        case AV_PROFILE_AAC_LD:
++          return AACCodecProfileLD;
++        case AV_PROFILE_AAC_ELD:
++          return AACCodecProfileELD;
++      }
++
++      break;
++    default:
++    	break;
++  }
++
++  // for everything else leave original profile
++  return static_cast<STREAMCODEC_PROFILE>(profile);
++}
++
+ bool DemuxStreamVideoFFmpeg::GetInformation(kodi::addon::InputstreamInfo& info)
+ {
+   DemuxStream::GetInformation(info);
+diff --git a/src/stream/DemuxStream.h b/src/stream/DemuxStream.h
+index e66ecf0..149cc68 100644
+--- a/src/stream/DemuxStream.h
++++ b/src/stream/DemuxStream.h
+@@ -80,8 +80,8 @@ public:
+     dvdNavId = 0;
+     demuxerId = -1;
+     codec_fourcc = 0;
+-    profile = FF_PROFILE_UNKNOWN;
+-    level = FF_LEVEL_UNKNOWN;
++    profile = AV_PROFILE_UNKNOWN;
++    level = AV_LEVEL_UNKNOWN;
+     type = INPUTSTREAM_TYPE_NONE;
+     iDuration = 0;
+     pPrivate = NULL;
+@@ -95,6 +95,7 @@ public:
+ 
+   virtual std::string GetStreamName();
+   virtual bool GetInformation(kodi::addon::InputstreamInfo& info);
++  virtual STREAMCODEC_PROFILE ConvertToInputStreamProfile(AVCodecID codec, int profile);
+ 
+   int uniqueId; // unique stream id
+   int dvdNavId;
+diff --git a/src/stream/FFmpegStream.cpp b/src/stream/FFmpegStream.cpp
+index 8bf474f..fcb071f 100644
+--- a/src/stream/FFmpegStream.cpp
++++ b/src/stream/FFmpegStream.cpp
+@@ -1012,74 +1012,7 @@ bool FFmpegStream::OpenWithCURL(const AVInputFormat* iformat)
+   if (iformat == nullptr)
+   {
+     // let ffmpeg decide which demuxer we have to open
+-    bool trySPDIFonly = (m_curlInput->GetContent() == "audio/x-spdif-compressed");
+-
+-    if (!trySPDIFonly)
+-      av_probe_input_buffer(m_ioContext, &iformat, strFile.c_str(), NULL, 0, 0);
+-
+-    // Use the more low-level code in case we have been built against an old
+-    // FFmpeg without the above av_probe_input_buffer(), or in case we only
+-    // want to probe for spdif (DTS or IEC 61937) compressed audio
+-    // specifically, or in case the file is a wav which may contain DTS or
+-    // IEC 61937 (e.g. ac3-in-wav) and we want to check for those formats.
+-    if (trySPDIFonly || (iformat && strcmp(iformat->name, "wav") == 0))
+-    {
+-      AVProbeData pd;
+-      int probeBufferSize = 32768;
+-      std::unique_ptr<uint8_t[]> probe_buffer (new uint8_t[probeBufferSize + AVPROBE_PADDING_SIZE]);
+-
+-      // init probe data
+-      pd.buf = probe_buffer.get();
+-      pd.filename = strFile.c_str();
+-
+-      // read data using avformat's buffers
+-      pd.buf_size = avio_read(m_ioContext, pd.buf, probeBufferSize);
+-      if (pd.buf_size <= 0)
+-      {
+-        Log(LOGLEVEL_ERROR, "%s - error reading from input stream, %s", __FUNCTION__, CURL::GetRedacted(strFile).c_str());
+-        return false;
+-      }
+-      memset(pd.buf + pd.buf_size, 0, AVPROBE_PADDING_SIZE);
+-
+-      // restore position again
+-      avio_seek(m_ioContext , 0, SEEK_SET);
+-
+-      // the advancedsetting is for allowing the user to force outputting the
+-      // 44.1 kHz DTS wav file as PCM, so that an A/V receiver can decode
+-      // it (this is temporary until we handle 44.1 kHz passthrough properly)
+-      if (trySPDIFonly || (iformat && strcmp(iformat->name, "wav") == 0)) // && !CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_VideoPlayerIgnoreDTSinWAV))
+-      {
+-        // check for spdif and dts
+-        // This is used with wav files and audio CDs that may contain
+-        // a DTS or AC3 track padded for S/PDIF playback. If neither of those
+-        // is present, we assume it is PCM audio.
+-        // AC3 is always wrapped in iec61937 (ffmpeg "spdif"), while DTS
+-        // may be just padded.
+-        const AVInputFormat* iformat2 = av_find_input_format("spdif");
+-
+-        if (iformat2 && iformat2->read_probe(&pd) > AVPROBE_SCORE_MAX / 4)
+-        {
+-          iformat = iformat2;
+-        }
+-        else
+-        {
+-          // not spdif or no spdif demuxer, try dts
+-          iformat2 = av_find_input_format("dts");
+-
+-          if (iformat2 && iformat2->read_probe(&pd) > AVPROBE_SCORE_MAX / 4)
+-          {
+-            iformat = iformat2;
+-          }
+-          else if (trySPDIFonly)
+-          {
+-            // not dts either, return false in case we were explicitly
+-            // requested to only check for S/PDIF padded compressed audio
+-            Log(LOGLEVEL_DEBUG, "%s - not spdif or dts file, falling back", __FUNCTION__);
+-            return false;
+-          }
+-        }
+-      }
+-    }
++    av_probe_input_buffer(m_ioContext, &iformat, strFile.c_str(), NULL, 0, 0);
+ 
+     if (!iformat)
+     {
+@@ -1535,7 +1468,7 @@ bool FFmpegStream::SeekTime(double time, bool backwards, double* startpts)
+ 
+     if (ret >= 0)
+     {
+-      if (m_pFormatContext->iformat->read_seek)
++      if (!(m_pFormatContext->iformat->flags & AVFMT_NOTIMESTAMPS))
+         m_seekToKeyFrame = true;
+ 
+         m_currentPts = STREAM_NOPTS_VALUE;
+@@ -1582,7 +1515,7 @@ bool FFmpegStream::SeekTime(double time, bool backwards, double* startpts)
+ 
+ FFmpegExtraData FFmpegStream::GetPacketExtradata(const AVPacket* pkt, const AVCodecParameters* codecPar)
+ {
+-  constexpr int FF_MAX_EXTRADATA_SIZE = ((1 << 28) - AV_INPUT_BUFFER_PADDING_SIZE);
++  constexpr int AV_MAX_EXTRADATA_SIZE = ((1 << 28) - AV_INPUT_BUFFER_PADDING_SIZE);
+ 
+   if (!pkt)
+     return {};
+@@ -1675,7 +1608,7 @@ FFmpegExtraData FFmpegStream::GetPacketExtradata(const AVPacket* pkt, const AVCo
+     size_t retExtraDataSize = 0;
+     uint8_t* retExtraData =
+         av_packet_get_side_data(pktRef, AV_PKT_DATA_NEW_EXTRADATA, &retExtraDataSize);
+-    if (retExtraData && retExtraDataSize > 0 && retExtraDataSize < FF_MAX_EXTRADATA_SIZE)
++    if (retExtraData && retExtraDataSize > 0 && retExtraDataSize < AV_MAX_EXTRADATA_SIZE)
+     {
+       try
+       {
+@@ -2059,43 +1992,49 @@ DemuxStream* FFmpegStream::AddStream(int streamIdx)
+         st->colorRange = pStream->codecpar->color_range;
+         st->hdr_type = DetermineHdrType(pStream);
+ 
+-        // https://github.com/FFmpeg/FFmpeg/blob/release/5.0/doc/APIchanges
+-        size_t size = 0;
+-        uint8_t* side_data = nullptr;
++        // https://github.com/FFmpeg/FFmpeg/blob/release/7.0/doc/APIchanges
++        const AVPacketSideData* sideData = nullptr;
+ 
+         if (st->hdr_type == StreamHdrType::HDR_TYPE_DOLBYVISION)
+         {
+-          side_data = av_stream_get_side_data(pStream, AV_PKT_DATA_DOVI_CONF, &size);
+-          if (side_data && size)
++
++          sideData =
++              av_packet_side_data_get(pStream->codecpar->coded_side_data,
++                                      pStream->codecpar->nb_coded_side_data, AV_PKT_DATA_DOVI_CONF);
++          if (sideData && sideData->size)
+           {
+-            st->dovi = *reinterpret_cast<AVDOVIDecoderConfigurationRecord*>(side_data);
++            st->dovi = *reinterpret_cast<const AVDOVIDecoderConfigurationRecord*>(sideData->data);
+           }
+         }
+ 
+-        side_data = av_stream_get_side_data(pStream, AV_PKT_DATA_MASTERING_DISPLAY_METADATA, &size);
+-        if (side_data && size)
++        sideData = av_packet_side_data_get(pStream->codecpar->coded_side_data,
++                                           pStream->codecpar->nb_coded_side_data,
++                                           AV_PKT_DATA_MASTERING_DISPLAY_METADATA);
++        if (sideData && sideData->size)
+         {
+           st->masteringMetaData = std::make_shared<AVMasteringDisplayMetadata>(
+-              *reinterpret_cast<AVMasteringDisplayMetadata*>(side_data));
++              *reinterpret_cast<const AVMasteringDisplayMetadata*>(sideData->data));
+         }
+ 
+-        side_data = av_stream_get_side_data(pStream, AV_PKT_DATA_CONTENT_LIGHT_LEVEL, &size);
+-        if (side_data && size)
++        sideData = av_packet_side_data_get(pStream->codecpar->coded_side_data,
++                                           pStream->codecpar->nb_coded_side_data,
++                                           AV_PKT_DATA_CONTENT_LIGHT_LEVEL);
++        if (sideData && sideData->size)
+         {
+           st->contentLightMetaData = std::make_shared<AVContentLightMetadata>(
+-              *reinterpret_cast<AVContentLightMetadata*>(side_data));
++              *reinterpret_cast<const AVContentLightMetadata*>(sideData->data));
+         }
+ 
+-        AVDictionaryEntry* rtag = av_dict_get(pStream->metadata, "rotate", NULL, 0);
+-        uint8_t* displayMatrixSideData =
+-            av_stream_get_side_data(pStream, AV_PKT_DATA_DISPLAYMATRIX, nullptr);
+-        if (displayMatrixSideData)
++        sideData = av_packet_side_data_get(pStream->codecpar->coded_side_data,
++                                           pStream->codecpar->nb_coded_side_data,
++                                           AV_PKT_DATA_DISPLAYMATRIX);
++        if (sideData)
+         {
+-          const double tetha =
+-              av_display_rotation_get(reinterpret_cast<int32_t*>(displayMatrixSideData));
+-          if (!std::isnan(tetha))
++          const double theta =
++              av_display_rotation_get(reinterpret_cast<const int32_t*>(sideData->data));
++          if (!std::isnan(theta))
+           {
+-            st->iOrientation = ((static_cast<int>(-tetha) % 360) + 360) % 360;
++            st->iOrientation = ((static_cast<int>(-theta) % 360) + 360) % 360;
+           }
+         }
+ 
+@@ -2271,7 +2210,9 @@ StreamHdrType FFmpegStream::DetermineHdrType(AVStream* pStream)
+ {
+   StreamHdrType hdrType = StreamHdrType::HDR_TYPE_NONE;
+ 
+-  if (av_stream_get_side_data(pStream, AV_PKT_DATA_DOVI_CONF, nullptr)) // DoVi
++  if (av_packet_side_data_get(pStream->codecpar->coded_side_data,
++                              pStream->codecpar->nb_coded_side_data,
++                              AV_PKT_DATA_DOVI_CONF)) // DoVi
+     hdrType = StreamHdrType::HDR_TYPE_DOLBYVISION;
+   else if (pStream->codecpar->color_trc == AVCOL_TRC_SMPTE2084) // HDR10
+     hdrType = StreamHdrType::HDR_TYPE_HDR10;
+@@ -2279,7 +2220,9 @@ StreamHdrType FFmpegStream::DetermineHdrType(AVStream* pStream)
+     hdrType = StreamHdrType::HDR_TYPE_HLG;
+   // file could be SMPTE2086 which FFmpeg currently returns as unknown
+   // so use the presence of static metadata to detect it
+-  else if (av_stream_get_side_data(pStream, AV_PKT_DATA_MASTERING_DISPLAY_METADATA, nullptr))
++  else if (av_packet_side_data_get(pStream->codecpar->coded_side_data,
++                                   pStream->codecpar->nb_coded_side_data,
++                                   AV_PKT_DATA_MASTERING_DISPLAY_METADATA))
+     hdrType = StreamHdrType::HDR_TYPE_HDR10;
+ 
+   return hdrType;
+@@ -2317,9 +2260,9 @@ std::string FFmpegStream::GetStreamCodecName(int iStreamId)
+     /* use profile to determine the DTS type */
+     if (stream->codec == AV_CODEC_ID_DTS)
+     {
+-      if (stream->profile == FF_PROFILE_DTS_HD_MA)
++      if (stream->profile == AV_PROFILE_DTS_HD_MA)
+         strName = "dtshd_ma";
+-      else if (stream->profile == FF_PROFILE_DTS_HD_HRA)
++      else if (stream->profile == AV_PROFILE_DTS_HD_HRA)
+         strName = "dtshd_hra";
+       else
+         strName = "dca";
+@@ -2344,6 +2287,10 @@ AVDictionary* FFmpegStream::GetFFMpegOptionsFromInput()
+   if (url.GetProtocol().empty() || url.IsProtocol("file"))
+     av_dict_set(&options, "protocol_whitelist", "file,http,https,tcp,tls,crypto", 0);
+ 
++  // Disable strict HLS file extension check
++  if (kodi::addon::GetSettingBoolean("disableStrictHLSfileExtensionCheck"))
++    av_dict_set(&options, "extension_picky", "0", 0);
++
+   if (url.IsProtocol("http") || url.IsProtocol("https"))
+   {
+     std::map<std::string, std::string> protocolOptions;
+diff --git a/src/stream/url/URL.cpp b/src/stream/url/URL.cpp
+index a01f4b1..76060fc 100644
+--- a/src/stream/url/URL.cpp
++++ b/src/stream/url/URL.cpp
+@@ -25,6 +25,7 @@
+ #include <kodi/tools/StringUtils.h>
+ 
+ using namespace kodi::tools;
++using namespace ffmpegdirect;
+ //using namespace ADDON;
+ 
+ namespace
+diff --git a/src/stream/url/URL.h b/src/stream/url/URL.h
+index 658503c..884a4cc 100644
+--- a/src/stream/url/URL.h
++++ b/src/stream/url/URL.h
+@@ -16,6 +16,8 @@
+ #undef SetPort // WIN32INCLUDES this is defined as SetPortA in WinSpool.h which is being included _somewhere_
+ #endif
+ 
++namespace ffmpegdirect
++{
+ class CURL
+ {
+ public:
+@@ -199,3 +201,4 @@ protected:
+   CUrlOptions m_options;
+   CUrlOptions m_protocolOptions;
+ };
++} // namespace ffmpegdirect
+diff --git a/src/stream/url/UrlOptions.cpp b/src/stream/url/UrlOptions.cpp
+index 38b42c4..253c001 100644
+--- a/src/stream/url/UrlOptions.cpp
++++ b/src/stream/url/UrlOptions.cpp
+@@ -13,6 +13,7 @@
+ #include <kodi/tools/StringUtils.h>
+ 
+ using namespace kodi::tools;
++using namespace ffmpegdirect;
+ 
+ CUrlOptions::CUrlOptions() = default;
+ 
+@@ -157,7 +158,7 @@ bool CUrlOptions::HasOption(const std::string &key) const
+   return m_options.find(key) != m_options.end();
+ }
+ 
+-bool CUrlOptions::GetOption(const std::string &key, CVariant &value) const
++bool CUrlOptions::GetOption(const std::string &key, ffmpegdirect::CVariant &value) const
+ {
+   if (key.empty())
+     return false;
+diff --git a/src/stream/url/UrlOptions.h b/src/stream/url/UrlOptions.h
+index 589206e..33c8991 100644
+--- a/src/stream/url/UrlOptions.h
++++ b/src/stream/url/UrlOptions.h
+@@ -12,10 +12,12 @@
+ #include <map>
+ #include <string>
+ 
++namespace ffmpegdirect
++{
+ class CUrlOptions
+ {
+ public:
+-  typedef std::map<std::string, CVariant> UrlOptions;
++  typedef std::map<std::string, ffmpegdirect::CVariant> UrlOptions;
+ 
+   CUrlOptions();
+   CUrlOptions(const std::string &options, const char *strLead = "");
+@@ -37,9 +39,10 @@ public:
+   virtual void RemoveOption(const std::string &key);
+ 
+   bool HasOption(const std::string &key) const;
+-  bool GetOption(const std::string &key, CVariant &value) const;
++  bool GetOption(const std::string &key, ffmpegdirect::CVariant &value) const;
+ 
+ protected:
+   UrlOptions m_options;
+   std::string m_strLead;
+ };
++} // namespace ffmpegdirect
+diff --git a/src/stream/url/Variant.cpp b/src/stream/url/Variant.cpp
+index a6ba76b..1593dfb 100644
+--- a/src/stream/url/Variant.cpp
++++ b/src/stream/url/Variant.cpp
+@@ -11,6 +11,8 @@
+ #include <string.h>
+ #include <utility>
+ 
++using namespace ffmpegdirect;
++
+ #ifndef strtoll
+ #ifdef TARGET_WINDOWS
+ #define strtoll  _strtoi64
+diff --git a/src/stream/url/Variant.h b/src/stream/url/Variant.h
+index 5f609c1..4937e35 100644
+--- a/src/stream/url/Variant.h
++++ b/src/stream/url/Variant.h
+@@ -25,6 +25,8 @@ double str2double(const std::wstring &str, double fallback = 0.0);
+ #pragma pack(8)
+ #endif
+ 
++namespace ffmpegdirect
++{
+ class CVariant
+ {
+ public:
+@@ -162,6 +164,8 @@ private:
+   static VariantMap EMPTY_MAP;
+ };
+ 
++} // namespace ffmpegdirect
++
+ #ifdef TARGET_WINDOWS_STORE
+ #pragma pack(pop)
+ #endif

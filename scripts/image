@@ -95,13 +95,13 @@ if [ "${OFFICIAL}" = "yes" ]; then
   LIBREELEC_BUILD="official"
 else
   if [ ${NON_PERIODIC} ]; then
-    OS_STAGE="avdvplus_R9"
+    OS_STAGE="avdvplus_R10"
     BUILD_NUM="_$(date +%Y%m%d%H%M%S)"
   fi
   if [ -n "${BUILDER_NAME}" ]; then
     LIBREELEC_BUILD="${BUILDER_NAME}"
   else
-    LIBREELEC_BUILD="avdvplus_R9"
+    LIBREELEC_BUILD="avdvplus_R10"
   fi
 fi
 
@@ -115,11 +115,28 @@ if [ -n "${CUSTOM_VERSION}" ]; then
   LIBREELEC_VERSION="${CUSTOM_VERSION}"
 fi
 
+case "${DEBUG_CAPTURE:-no}" in
+  yes)
+    LIBREELEC_VERSION="${LIBREELEC_VERSION}_test"
+    echo "image: DEBUG_CAPTURE=yes - building a TEST image (debug capture ON, version suffixed _test)"
+    ;;
+  no)
+    echo "image: DEBUG_CAPTURE=no - building a PUBLIC image (debug capture OFF)"
+    ;;
+  *) die "DEBUG_CAPTURE must be 'yes' or 'no', got '${DEBUG_CAPTURE}'" ;;
+esac
+
 LIBREELEC_ARCH="${DEVICE:-${PROJECT}}.${TARGET_ARCH}"
 TARGET_VERSION="${LIBREELEC_ARCH}-${LIBREELEC_VERSION}"
 
 if [ -n "${CUSTOM_IMAGE_NAME}" ]; then
   IMAGE_NAME="${CUSTOM_IMAGE_NAME}"
+  if [ "${DEBUG_CAPTURE:-no}" = "yes" ]; then
+    case "${IMAGE_NAME}" in
+      *_test) ;;
+      *) IMAGE_NAME="${IMAGE_NAME}_test" ;;
+    esac
+  fi
 else
   IMAGE_NAME="${DISTRONAME}-${TARGET_VERSION}"
 

@@ -1,0 +1,89 @@
+diff -ruN -x __pycache__ pristine/resources/language/resource.language.ar_sa/strings.po w1/resources/language/resource.language.ar_sa/strings.po
+--- a/resources/language/resource.language.ar_sa/strings.po	2026-08-28 20:16:51.807856410 -0500
++++ b/resources/language/resource.language.ar_sa/strings.po	2026-08-28 21:19:07.551669203 -0500
+@@ -48,8 +48,8 @@
+ msgstr "نطاق الألوان"
+ 
+ msgctxt "#32016"
+-msgid "Only CoreELEC 22 or later is supported"
+-msgstr "يُدعم فقط CoreELEC 22 أو أحدث"
++msgid "Only CoreELEC 21 or later is supported"
++msgstr "يُدعم فقط CoreELEC 21 أو أحدث"
+ 
+ msgctxt "#32017"
+ msgid "The CoreELEC version could not be detected"
+diff -ruN -x __pycache__ pristine/resources/language/resource.language.de_de/strings.po w1/resources/language/resource.language.de_de/strings.po
+--- a/resources/language/resource.language.de_de/strings.po	2026-08-28 20:16:51.807934869 -0500
++++ b/resources/language/resource.language.de_de/strings.po	2026-08-28 21:19:07.552269139 -0500
+@@ -48,8 +48,8 @@
+ msgstr "Farbraum"
+ 
+ msgctxt "#32016"
+-msgid "Only CoreELEC 22 or later is supported"
+-msgstr "Nur CoreELEC 22 oder neuer wird unterstützt"
++msgid "Only CoreELEC 21 or later is supported"
++msgstr "Nur CoreELEC 21 oder neuer wird unterstützt"
+ 
+ msgctxt "#32017"
+ msgid "The CoreELEC version could not be detected"
+diff -ruN -x __pycache__ pristine/resources/language/resource.language.en_gb/strings.po w1/resources/language/resource.language.en_gb/strings.po
+--- a/resources/language/resource.language.en_gb/strings.po	2026-08-28 20:16:51.808018218 -0500
++++ b/resources/language/resource.language.en_gb/strings.po	2026-08-28 21:19:07.550056533 -0500
+@@ -48,7 +48,7 @@
+ msgstr ""
+ 
+ msgctxt "#32016"
+-msgid "Only CoreELEC 22 or later is supported"
++msgid "Only CoreELEC 21 or later is supported"
+ msgstr ""
+ 
+ msgctxt "#32017"
+diff -ruN -x __pycache__ pristine/resources/language/resource.language.hu_hu/strings.po w1/resources/language/resource.language.hu_hu/strings.po
+--- a/resources/language/resource.language.hu_hu/strings.po	2026-08-28 20:16:51.808067368 -0500
++++ b/resources/language/resource.language.hu_hu/strings.po	2026-08-28 21:19:07.550839428 -0500
+@@ -48,8 +48,8 @@
+ msgstr "Színtér"
+ 
+ msgctxt "#32016"
+-msgid "Only CoreELEC 22 or later is supported"
+-msgstr "Csak CoreELEC 22 vagy újabb verzió támogatott"
++msgid "Only CoreELEC 21 or later is supported"
++msgstr "Csak CoreELEC 21 vagy újabb verzió támogatott"
+ 
+ msgctxt "#32017"
+ msgid "The CoreELEC version could not be detected"
+diff -ruN -x __pycache__ pristine/resources/language/resource.language.zh_cn/strings.po w1/resources/language/resource.language.zh_cn/strings.po
+--- a/resources/language/resource.language.zh_cn/strings.po	2026-08-28 20:16:51.808115157 -0500
++++ b/resources/language/resource.language.zh_cn/strings.po	2026-08-28 21:19:07.552951917 -0500
+@@ -48,8 +48,8 @@
+ msgstr "色域"
+ 
+ msgctxt "#32016"
+-msgid "Only CoreELEC 22 or later is supported"
+-msgstr "仅支持 CoreELEC 22 或更高版本"
++msgid "Only CoreELEC 21 or later is supported"
++msgstr "仅支持 CoreELEC 21 或更高版本"
+ 
+ msgctxt "#32017"
+ msgid "The CoreELEC version could not be detected"
+diff -ruN -x __pycache__ pristine/resources/lib/ui/overlay.py w1/resources/lib/ui/overlay.py
+--- a/resources/lib/ui/overlay.py	2026-08-28 20:16:51.808980877 -0500
++++ b/resources/lib/ui/overlay.py	2026-08-28 20:53:12.037698411 -0500
+@@ -166,7 +166,7 @@
+             _notify_error(32017)
+             return False
+ 
+-        if major_version < 22:
++        if major_version < 21:
+             _notify_error(32016)
+             return False
+ 
+@@ -610,7 +610,7 @@
+     over to the metadata view and Back hands back, so this runs until one of
+     them is closed for good rather than handing over to the other.
+ 
+-    Skips silently on non-CoreELEC (unless ``_ALLOW_NON_COREELEC``), Kodi < 22,
++    Skips silently on non-CoreELEC (unless ``_ALLOW_NON_COREELEC``), Kodi < 21,
+     a 720p skin, no fullscreen video, or nothing playing; toggle-closes when the
+     overlay is already open.
+     """

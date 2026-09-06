@@ -37,17 +37,14 @@ NBWGET=10
 NBCHKS=2
 while [ ${NBWGET} -gt 0 -a ${NBCHKS} -gt 0 ]; do
   for url in "${PKG_URL}" ${PACKAGE_MIRROR}; do
-    if [[ "$PKG_USETOKEN" == "yes" ]]; then
-      if [[ $url == https://github.com/* ]] && [[ -n $COREELEC_GHTOKEN ]]; then
-        WGET_HEADER=--header="Authorization: token $COREELEC_GHTOKEN"
-      fi
-    else
-      WGET_HEADER=--header=""
+    WGET_HEADER=()
+    if [[ "${PKG_USETOKEN}" == "yes" && ${url} == https://github.com/* && -n ${COREELEC_GHTOKEN} ]]; then
+      WGET_HEADER=(--header "Authorization: token ${COREELEC_GHTOKEN}")
     fi
 
     rm -f "${PACKAGE}"
     [[ "${url}" =~ ^[fF][tT][pP]:* ]] && WGET_FTP=--passive-ftp || WGET_FTP=
-    if ${WGET_CMD} ${WGET_FTP} "$WGET_HEADER" "${url}"; then
+    if ${WGET_CMD} ${WGET_FTP} "${WGET_HEADER[@]}" "${url}"; then
       CALC_SHA256=$(sha256sum "${PACKAGE}" | cut -d" " -f1)
 
       [ -z "${PKG_SHA256}" -o "${PKG_SHA256}" = "${CALC_SHA256}" ] && break 2

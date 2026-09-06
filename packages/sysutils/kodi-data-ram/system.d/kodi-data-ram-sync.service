@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync Kodi RAM userdata to persistent storage
+ConditionPathIsMountPoint=/run/kodi-data-rw
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=idle
+ExecStart=/usr/lib/coreelec/kodi-data-ram-sync.sh

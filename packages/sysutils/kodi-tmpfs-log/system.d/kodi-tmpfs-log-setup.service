@@ -1,0 +1,15 @@
+[Unit]
+Description=Kodi temp/log tmpfs setup
+DefaultDependencies=no
+After=local-fs.target
+Before=kodi.service kodi-autostart.service
+RequiresMountsFor=/storage /run
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/coreelec/kodi-tmpfs-log-up.sh
+ExecStop=/usr/lib/coreelec/kodi-tmpfs-log-down.sh
+
+[Install]
+WantedBy=kodi.service

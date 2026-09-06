@@ -1,0 +1,43 @@
+diff -urN a/src/libbluray/bdj/java/java/awt/BDRootWindow.java b/src/libbluray/bdj/java/java/awt/BDRootWindow.java
+--- a/src/libbluray/bdj/java/java/awt/BDRootWindow.java
++++ b/src/libbluray/bdj/java/java/awt/BDRootWindow.java
+@@ -126,6 +126,30 @@
+ 
+             Area a = dirty.getBoundsAndClear();
+ 
++            if (BDJ_XLET_DBG) {
++                int h = 0;
++                int samples = 0;
++                if (!a.isEmpty() && backBuffer != null) {
++                    int w = getWidth();
++                    int yStep = Math.max(1, (a.getY1() - a.getY0() + 1) / 8);
++                    int xStep = Math.max(1, (a.getX1() - a.getX0() + 1) / 8);
++                    for (int y = a.getY0(); y <= a.getY1(); y += yStep) {
++                        for (int x = a.getX0(); x <= a.getX1(); x += xStep) {
++                            int idx = y * w + x;
++                            if (idx >= 0 && idx < backBuffer.length) {
++                                h = h * 31 + backBuffer[idx];
++                                samples++;
++                            }
++                        }
++                    }
++                }
++                System.err.println("BDJXletDBG: sync_dirty x0=" + a.getX0()
++                    + " y0=" + a.getY0() + " x1=" + a.getX1() + " y1=" + a.getY1()
++                    + " empty=" + a.isEmpty()
++                    + " overlay_open=" + overlay_open
++                    + " hash=0x" + Integer.toHexString(h) + " samples=" + samples);
++            }
++
+             if (!a.isEmpty()) {
+                 if (!overlay_open) {
+ 
+@@ -233,5 +257,8 @@
+ 
+     private static final Logger logger = Logger.getLogger(BDRootWindow.class.getName());
+ 
++    private static final boolean BDJ_XLET_DBG =
++        Boolean.parseBoolean(System.getProperty("org.videolan.bdj.xletdbg", "false"));
++
+     private static final long serialVersionUID = -8325961861529007953L;
+ }

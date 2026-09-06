@@ -1,0 +1,570 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Sebastiiii <sebastiii@team-mediaportal.com>
+Date: Thu, 30 Jul 2026 00:00:00 +0200
+Subject: [PATCH] avformat/matroskadec: add support for selecting Matroska
+ editions and seamless initial seeking
+
+Implement proper parsing and handling of Matroska (MKV) editions. Previously,
+selecting a non-default edition through AVOptions or demuxer properties resulted in
+playback starting at the absolute beginning of the file (00:00:00), leading to long
+network/buffering lags on SMB/remote shares and incorrect initial PTS alignment.
+
+Key changes:
+
+- Header Parsing & Selection: Expose edition duration, metadata, and chapters
+  according to the selected edition index (`edition` AVOption).
+
+- Active Edition Resolution: When no edition is explicitly requested, honor the
+  file's own EditionFlagDefault if present. If there is exactly one edition
+  (the common case for ordinary chapters, which are always wrapped in a single
+  EditionEntry), use it to expose chapters. Otherwise, when a file has multiple
+  editions and none is flagged default, no chapters are exposed at all.
+
+- Scoped Boundary Handling: Only a genuinely selected edition -- an explicit
+  AVOption, or a real choice among multiple editions -- gets the duration
+  override, end-of-edition EOF cutoff, PTS rebase and direct seek described
+  below. An ordinary single-edition file (plain chapters, always wrapped in one
+  EditionEntry) keeps behaving exactly like a file without edition support:
+  unbounded duration, no EOF cutoff, chapters exposed with their raw absolute
+  timestamps. Applying the boundary handling unconditionally to every
+  chaptered file used to give an early EOF / a short duration whenever not
+  every chapter carried an explicit end time.
+
+- Cues Required For Rebasing, Except At Offset Zero: A physical seek to the
+  edition's start (via the Cues) is a precondition for the duration/EOF
+  boundary on any edition that starts away from the file's own beginning --
+  if no matching Cue is found, chapters and packet timestamps both stay
+  unrebased and unbounded, instead of exposing rebased chapters while the
+  actual stream PTS silently stays absolute. An edition whose first chapter
+  already starts at 0 needs neither a seek nor a rebase (subtracting 0 is a
+  no-op), so the duration/EOF boundary is applied for it unconditionally --
+  requiring a (pointless, and for many real-world edition sets impossible to
+  satisfy) Cue lookup in that case used to silently disable the boundary
+  handling for every edition starting at 0, making files with such editions
+  play back at the underlying container's full duration regardless of which
+  edition was selected.
+
+- Deferred Cues & Direct Seeking: Force parsing of EBML Cues
+  (`matroska_parse_cues`) during header reading when an edition with a
+  non-zero start time is selected and scoped. Perform an initial seek directly
+  to the target Cluster offset, eliminating network buffering delays over SMB.
+
+- Timestamp Normalization: Store `edition_start_pts_ns` in MatroskaDemuxContext,
+  set only once the physical seek above has actually succeeded. Subtract the
+  edition start offset from packet PTS/DTS in `matroska_read_packet` so that
+  playback begins at 00:00:00 in the player timeline.
+
+- Seek Translation: Translate user/player seek targets in `matroska_read_seek`
+  by adding `edition_start_pts_ns`, avoiding negative timestamps and keeping seek
+  positions relative to the active edition.
+
+- Edition Duration: Compute the edition's total duration from the maximum
+  explicit chapter end time (raw, i.e. before any chapter-overlap display
+  correction), across two passes so the result does not depend on chapter
+  ordering. A chapter without an explicit ChapterTimeEnd is otherwise ignored
+  for duration purposes, matching how such chapters are already treated
+  elsewhere (visual-only markers rather than independent timed blocks).
+
+- Last Chapter End: Never expose an open-ended (AV_NOPTS_VALUE) end time for
+  the last chapter of an edition; fall back to the edition's total computed
+  duration instead. Some players compare against a chapter's end time to
+  determine "current chapter" (e.g. Kodi's CDVDDemuxFFmpeg::GetChapter() via
+  ConvertTimestamp()) and treat AV_NOPTS_VALUE as a sentinel that never
+  matches, silently preventing the last chapter from ever being detected as
+  current.
+
+- End-of-Edition Detection: Return `AVERROR_EOF` in `matroska_read_packet` once
+  the read PTS reaches the edition's absolute end boundary, stored as
+  `edition_end_pts_ns` in MatroskaDemuxContext and computed alongside the
+  duration above, and properly release the packet with `av_packet_unref()`
+  before returning.
+
+- Chapter Tag Metadata: Chapters now live per-edition (MatroskaEdition.chapters)
+  rather than in the old flat MatroskaDemuxContext.chapters list, so
+  `matroska_convert_tags()` searches every edition's chapters for a matching
+  ChapterUID instead of a list that is never populated anymore.
+
+- Edition Naming: Resolve `mkv_edition_N_name` from a Tag whose TagTargets
+  reference the edition's EditionUID (TargetType "EDITION"), the proper
+  Matroska mechanism for naming an edition, falling back to the first
+  chapter's title and then a generic "Edition N" label. This required adding
+  the (currently missing from matroska.h) EditionUID TagTargets sub-element.
+
+---
+ libavformat/matroskadec.c | 340 +++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 311 insertions(+), 29 deletions(-)
+
+diff --git a/libavformat/matroskadec.c b/libavformat/matroskadec.c
+index 344e610e18..e9991b9f3b 100644
+--- a/libavformat/matroskadec.c
++++ b/libavformat/matroskadec.c
+@@ -311,11 +311,18 @@
+     uint64_t start;
+     uint64_t end;
+     uint64_t uid;
+-    char    *title;
+-
++    char *title;
+     AVChapter *chapter;
+ } MatroskaChapter;
+
++typedef struct MatroskaEdition {
++    uint64_t uid;
++    uint64_t default_edition;
++    uint64_t hidden;
++    uint64_t ordered;
++    EbmlList chapters; // Chapters belonging to this edition
++} MatroskaEdition;
++
+ typedef struct MatroskaIndexPos {
+     uint64_t track;
+     uint64_t pos;
+@@ -340,6 +347,7 @@
+     uint64_t trackuid;
+     uint64_t chapteruid;
+     uint64_t attachuid;
++    uint64_t editionuid;
+ } MatroskaTagTarget;
+
+ typedef struct MatroskaTags {
+@@ -438,6 +446,23 @@
+
+     /* Bandwidth value for WebM DASH Manifest */
+     int bandwidth;
++
++    /* Matroska edition selection */
++    int edition_number;          /* Requested edition, set via the "edition" AVOption */
++    EbmlList editions;           /* EbmlList of MatroskaEdition entries */
++    int64_t edition_start_pts_ns;/* Start timestamp (ns) of the active edition, only set once a
++                                     physical seek to that offset has actually been performed;
++                                     0 when unset/not applicable. */
++    int active_chapter_edition;  /* Edition whose chapters were exposed to the player: explicit
++                                     selection, the file's own EditionFlagDefault, or edition 0
++                                     when there is only a single (mandatory) EditionEntry.
++                                     -1 if none. Mirrors the local variable computed in
++                                     matroska_read_header so read_packet()/read_seek() stay
++                                     consistent with the chapters actually exposed. */
++    int64_t edition_end_pts_ns;  /* Absolute end boundary (ns) of the active edition, used by the
++                                     end-of-edition EOF check in read_packet(). Only set together
++                                     with edition_start_pts_ns, i.e. only when a physical seek to
++                                     the edition start succeeded. 0 if unset/unbounded. */
+ } MatroskaDemuxContext;
+
+ #define CHILD_OF(parent) { .def = { .n = parent } }
+@@ -681,16 +706,16 @@
+ };
+
+ static EbmlSyntax matroska_chapter[] = {
+-    { MATROSKA_ID_CHAPTERATOM,        EBML_NEST, 0, sizeof(MatroskaChapter), offsetof(MatroskaDemuxContext, chapters), { .n = matroska_chapter_entry } },
+-    { MATROSKA_ID_EDITIONUID,         EBML_NONE },
+-    { MATROSKA_ID_EDITIONFLAGHIDDEN,  EBML_NONE },
+-    { MATROSKA_ID_EDITIONFLAGDEFAULT, EBML_NONE },
+-    { MATROSKA_ID_EDITIONFLAGORDERED, EBML_NONE },
++    { MATROSKA_ID_CHAPTERATOM,        EBML_NEST, 0, sizeof(MatroskaChapter), offsetof(MatroskaEdition, chapters), { .n = matroska_chapter_entry } },
++    { MATROSKA_ID_EDITIONUID,         EBML_UINT, 0, 0, offsetof(MatroskaEdition, uid) },
++    { MATROSKA_ID_EDITIONFLAGHIDDEN,  EBML_UINT, 0, 0, offsetof(MatroskaEdition, hidden) },
++    { MATROSKA_ID_EDITIONFLAGDEFAULT, EBML_UINT, 0, 0, offsetof(MatroskaEdition, default_edition) },
++    { MATROSKA_ID_EDITIONFLAGORDERED, EBML_UINT, 0, 0, offsetof(MatroskaEdition, ordered) },
+     CHILD_OF(matroska_chapters)
+ };
+
+ static EbmlSyntax matroska_chapters[] = {
+-    { MATROSKA_ID_EDITIONENTRY, EBML_NEST, 0, 0, 0, { .n = matroska_chapter } },
++    { MATROSKA_ID_EDITIONENTRY, EBML_NEST, 0, sizeof(MatroskaEdition), offsetof(MatroskaDemuxContext, editions), { .n = matroska_chapter } },
+     CHILD_OF(matroska_segment)
+ };
+
+@@ -724,12 +749,17 @@
+     CHILD_OF(matroska_tag)
+ };
+
++/* Not yet defined in matroska.h upstream. Lets Tags target an EditionUID,
++ * the proper way to name an edition, instead of guessing from chapter titles. */
++#define MATROSKA_ID_TAGTARGETS_EDITIONUID 0x63C9
++
+ static EbmlSyntax matroska_tagtargets[] = {
+     { MATROSKA_ID_TAGTARGETS_TYPE,       EBML_STR,  0, 0, offsetof(MatroskaTagTarget, type) },
+     { MATROSKA_ID_TAGTARGETS_TYPEVALUE,  EBML_UINT, 0, 0, offsetof(MatroskaTagTarget, typevalue),  { .u = 50 } },
+     { MATROSKA_ID_TAGTARGETS_TRACKUID,   EBML_UINT, 0, 0, offsetof(MatroskaTagTarget, trackuid),   { .u = 0 } },
+     { MATROSKA_ID_TAGTARGETS_CHAPTERUID, EBML_UINT, 0, 0, offsetof(MatroskaTagTarget, chapteruid), { .u = 0 } },
+     { MATROSKA_ID_TAGTARGETS_ATTACHUID,  EBML_UINT, 0, 0, offsetof(MatroskaTagTarget, attachuid),  { .u = 0 } },
++    { MATROSKA_ID_TAGTARGETS_EDITIONUID, EBML_UINT, 0, 0, offsetof(MatroskaTagTarget, editionuid), { .u = 0 } },
+     CHILD_OF(matroska_tag)
+ };
+
+@@ -1877,14 +1907,20 @@
+                        i, tags[i].target.attachuid);
+             }
+         } else if (tags[i].target.chapteruid) {
+-            MatroskaChapter *chapter = matroska->chapters.elem;
++            /* Chapters now live per-edition (see MatroskaEdition.chapters) rather than
++             * in a flat matroska->chapters list, so search across every edition. */
++            MatroskaEdition *editions = matroska->editions.elem;
+             int found = 0;
+-            for (j = 0; j < matroska->chapters.nb_elem; j++) {
+-                if (chapter[j].uid == tags[i].target.chapteruid &&
+-                    chapter[j].chapter) {
+-                    matroska_convert_tag(s, &tags[i].tag,
+-                                         &chapter[j].chapter->metadata, NULL);
+-                    found = 1;
++            int e;
++            for (e = 0; e < matroska->editions.nb_elem; e++) {
++                MatroskaChapter *chapter = editions[e].chapters.elem;
++                for (j = 0; j < editions[e].chapters.nb_elem; j++) {
++                    if (chapter[j].uid == tags[i].target.chapteruid &&
++                        chapter[j].chapter) {
++                        matroska_convert_tag(s, &tags[i].tag,
++                                             &chapter[j].chapter->metadata, NULL);
++                        found = 1;
++                    }
+                 }
+             }
+             if (!found) {
+@@ -3326,10 +3362,7 @@
+     FFFormatContext *const si = ffformatcontext(s);
+     MatroskaDemuxContext *matroska = s->priv_data;
+     EbmlList *attachments_list = &matroska->attachments;
+-    EbmlList *chapters_list    = &matroska->chapters;
+     MatroskaAttachment *attachments;
+-    MatroskaChapter *chapters;
+-    uint64_t max_start = 0;
+     int64_t pos;
+     Ebml ebml = { 0 };
+     int i, j, res;
+@@ -3454,19 +3487,240 @@
+         }
+     }
+
+-    chapters = chapters_list->elem;
+-    for (i = 0; i < chapters_list->nb_elem; i++)
+-        if (chapters[i].start != AV_NOPTS_VALUE && chapters[i].uid &&
+-            (max_start == 0 || chapters[i].start > max_start)) {
+-            chapters[i].chapter =
+-                avpriv_new_chapter(s, chapters[i].uid,
+-                                   (AVRational) { 1, 1000000000 },
+-                                   chapters[i].start, chapters[i].end,
+-                                   chapters[i].title);
+-            max_start = chapters[i].start;
++    /* --- Edition selection, chapter exposure, and edition metadata --- */
++    {
++        EbmlList *editions_list = &matroska->editions;
++        MatroskaEdition *editions = editions_list->elem;
++        int num_editions = editions_list->nb_elem;
++        int cues_parsed_early = 0;
++
++        /* Determine selected edition index (explicit "edition" AVOption). */
++        int selected_edition = -1;
++        if (matroska->edition_number >= 0 && matroska->edition_number < num_editions)
++            selected_edition = matroska->edition_number;
++
++        /* Determine active edition: explicit selection takes priority; otherwise honor
++           the file's own EditionFlagDefault (the real Matroska mechanism for "use this
++           edition when none was requested"); otherwise, if there is exactly ONE
++           edition, use it -- a plain MKV with ordinary chapters is still wrapped in a
++           single EditionEntry (mandatory in the format), and single-edition files
++           almost never bother setting EditionFlagDefault. Only when there are
++           genuinely MULTIPLE editions and none is flagged default do we expose no
++           chapters at all (-1). */
++        int active_chapter_edition = selected_edition;
++        if (active_chapter_edition < 0 && num_editions == 1) {
++            active_chapter_edition = 0;
++        } else if (active_chapter_edition < 0 && num_editions > 1) {
++            for (i = 0; i < num_editions; i++) {
++                if (editions[i].default_edition) {
++                    active_chapter_edition = i;
++                    break;
++                }
++            }
++        }
++        /* Persist so read_packet()/read_seek() realign the stream against the SAME
++           edition whose chapters are exposed below. */
++        matroska->active_chapter_edition = active_chapter_edition;
++
++        /* Only a genuinely selected edition -- an explicit AVOption, or a real choice
++           among multiple editions -- gets the special boundary handling below
++           (duration override, end-of-edition EOF cutoff, PTS rebase, direct seek). An
++           ordinary single-edition file (the common case: plain chapters are always
++           wrapped in one EditionEntry) keeps behaving exactly like a file without
++           edition support: unbounded duration, no EOF cutoff, chapters exposed with
++           their raw absolute timestamps. Applying the boundary handling there too used
++           to give an early EOF / short duration on any file where not every chapter
++           carries an explicit end time. */
++        int edition_scoped = (selected_edition >= 0) || (num_editions > 1);
++
++        av_log(s, AV_LOG_VERBOSE,
++               "[Matroska/Editions] %d edition(s), requested=%d, active=%d, scoped=%d\n",
++               num_editions, matroska->edition_number, active_chapter_edition, edition_scoped);
++
++        if (active_chapter_edition >= 0 && num_editions > 0 && editions) {
++            EbmlList *selected_chapters_list = &editions[active_chapter_edition].chapters;
++            MatroskaChapter *selected_chapters = selected_chapters_list->elem;
++
++            /* Look for a Cue matching the edition's start time BEFORE exposing
++               chapters, so chapter rebasing and the real packet PTS rebase always
++               agree: both are driven off the same edition_base_pts, and only when a
++               physical seek to that offset actually succeeded (do_rebase). Without a
++               usable Cue there is no reliable way to reach the edition's start
++               ourselves, so fall back to plain, unscoped exposure instead of silently
++               desyncing chapters from the real stream timestamps. */
++            int64_t seek_pos = -1;
++            uint64_t edition_start_raw = 0;
++            int do_rebase = 0;
++
++            if (edition_scoped && selected_chapters && selected_chapters_list->nb_elem > 0 &&
++                selected_chapters[0].start != AV_NOPTS_VALUE && selected_chapters[0].start > 0) {
++                edition_start_raw = selected_chapters[0].start;
++
++                matroska_parse_cues(matroska);
++                cues_parsed_early = 1;
++
++                MatroskaIndex *cues = matroska->index.elem;
++                int num_cues = matroska->index.nb_elem;
++
++                for (i = 0; i < num_cues; i++) {
++                    uint64_t cue_time_ns = cues[i].time * matroska->time_scale;
++                    if (cue_time_ns >= edition_start_raw) {
++                        if (cues[i].pos.nb_elem > 0 && cues[i].pos.elem) {
++                            MatroskaIndexPos *index_pos = cues[i].pos.elem;
++                            seek_pos = index_pos[0].pos;
++                        }
++                        break;
++                    }
++                }
++
++                if (seek_pos >= 0) {
++                    avio_seek(s->pb, seek_pos, SEEK_SET);
++                    matroska_reset_status(matroska, 0, seek_pos);
++                    matroska->edition_start_pts_ns = edition_start_raw;
++                    do_rebase = 1;
++
++                    av_log(s, AV_LOG_VERBOSE,
++                           "[Matroska/Editions] Seeked to offset %"PRId64" for edition start %"PRIu64" ns\n",
++                           seek_pos, edition_start_raw);
++                } else {
++                    av_log(s, AV_LOG_VERBOSE,
++                           "[Matroska/Editions] No Cue found for edition start %"PRIu64" ns, "
++                           "falling back to unscoped (unbounded) exposure\n", edition_start_raw);
++                }
++            }
++
++            /* The duration/EOF boundary below only needs the Cue-based seek to have
++               succeeded (do_rebase) when the edition actually starts away from the
++               file's own beginning. When it already starts at 0, edition_base_pts is
++               0 either way -- there is nothing to rebase or desync -- so the boundary
++               can be applied without requiring a (pointless) physical seek to offset 0. */
++            int apply_boundary = edition_scoped && selected_chapters && selected_chapters_list->nb_elem > 0 &&
++                                  (selected_chapters[0].start == 0 || do_rebase);
++
++            {
++                uint64_t edition_base_pts = do_rebase ? edition_start_raw : 0;
++
++                if (selected_chapters && selected_chapters_list->nb_elem > 0) {
++                    uint64_t total_edition_duration_ns = 0;
++
++                    /* Pass 1: total duration = max of the EXPLICIT chapter end times
++                       (before the overlap fixup below), computed first and
++                       independently of chapter order, so it does not depend on an
++                       "encompassing" chapter (e.g. one spanning the whole video) being
++                       listed first. A chapter without an explicit ChapterTimeEnd is
++                       ignored here, matching how it is already treated below (a
++                       visual-only marker rather than an independently timed block). */
++                    for (i = 0; i < selected_chapters_list->nb_elem; i++) {
++                        if (selected_chapters[i].start != AV_NOPTS_VALUE && selected_chapters[i].uid &&
++                            selected_chapters[i].end != AV_NOPTS_VALUE) {
++                            uint64_t raw_rel_end = (selected_chapters[i].end >= edition_base_pts) ?
++                                                    selected_chapters[i].end - edition_base_pts : 0;
++                            if (raw_rel_end > total_edition_duration_ns)
++                                total_edition_duration_ns = raw_rel_end;
++                        }
++                    }
++
++                    /* Pass 2: build the AVChapters exposed to the player. */
++                    for (i = 0; i < selected_chapters_list->nb_elem; i++) {
++                        if (selected_chapters[i].start != AV_NOPTS_VALUE && selected_chapters[i].uid) {
++                            uint64_t rel_start = 0;
++                            if (selected_chapters[i].start >= edition_base_pts)
++                                rel_start = selected_chapters[i].start - edition_base_pts;
++
++                            uint64_t rel_end = (uint64_t)AV_NOPTS_VALUE;
++                            if (selected_chapters[i].end != AV_NOPTS_VALUE) {
++                                if (selected_chapters[i].end >= edition_base_pts)
++                                    rel_end = selected_chapters[i].end - edition_base_pts;
++                                else
++                                    rel_end = rel_start;
++                            }
++
++                            /* Fix up a chapter whose end spans past the next chapter's
++                               start (e.g. a trailing "End" chapter covering the rest of
++                               the video). */
++                            if (i < selected_chapters_list->nb_elem - 1 &&
++                                selected_chapters[i + 1].start != AV_NOPTS_VALUE) {
++                                uint64_t next_start_raw = selected_chapters[i + 1].start;
++                                uint64_t next_rel_start = (next_start_raw >= edition_base_pts) ?
++                                                           (next_start_raw - edition_base_pts) : rel_start;
++                                if (rel_end == (uint64_t)AV_NOPTS_VALUE || rel_end > next_rel_start)
++                                    rel_end = next_rel_start;
++                            }
++
++                            /* Never expose a NOPTS end for the last chapter: players
++                               like Kodi (CDVDDemuxFFmpeg::GetChapter(), via
++                               ConvertTimestamp()) treat AV_NOPTS_VALUE as a sentinel
++                               that never matches any time comparison, so "currently in
++                               the last chapter" would never be detected. Close it on
++                               the total duration computed above instead. */
++                            if (rel_end == (uint64_t)AV_NOPTS_VALUE && total_edition_duration_ns > rel_start)
++                                rel_end = total_edition_duration_ns;
++
++                            selected_chapters[i].chapter =
++                                avpriv_new_chapter(s, selected_chapters[i].uid,
++                                                   (AVRational) { 1, 1000000000 },
++                                                   rel_start, rel_end,
++                                                   selected_chapters[i].title);
++                        }
++                    }
++
++                    if (apply_boundary && total_edition_duration_ns > 0) {
++                        s->duration = av_rescale(total_edition_duration_ns, AV_TIME_BASE, 1000000000);
++                        /* Absolute boundary used by the EOF check in read_packet(),
++                           since the raw last chapter's .end is usually NOPTS for this
++                           data shape. */
++                        matroska->edition_end_pts_ns = (int64_t)(edition_base_pts + total_edition_duration_ns);
++                    }
++                }
++            }
+         }
+
+-    matroska_add_index_entries(matroska);
++        /* Export edition metadata for player GUIs (e.g. Kodi's edition-selection dialog). */
++        av_dict_set_int(&s->metadata, "mkv_num_editions", num_editions, 0);
++
++        if (num_editions > 0 && editions) {
++            MatroskaTags *tags = matroska->tags.elem;
++
++            for (i = 0; i < num_editions; i++) {
++                char key_name[64];
++                char default_title[64];
++                const char *title = NULL;
++
++                snprintf(key_name, sizeof(key_name), "mkv_edition_%d_name", i);
++
++                /* Prefer a Tag targeting this edition's UID -- the proper way to name
++                   an edition -- over guessing from the first chapter's title. */
++                for (j = 0; j < matroska->tags.nb_elem && !title; j++) {
++                    if (!tags[j].target.editionuid || tags[j].target.editionuid != editions[i].uid)
++                        continue;
++                    MatroskaTag *subtags = tags[j].tag.elem;
++                    int k;
++                    for (k = 0; k < tags[j].tag.nb_elem; k++) {
++                        if (subtags[k].name && !strcmp(subtags[k].name, "TITLE") && subtags[k].string) {
++                            title = subtags[k].string;
++                            break;
++                        }
++                    }
++                }
++
++                if (!title && editions[i].chapters.nb_elem > 0 && editions[i].chapters.elem) {
++                    MatroskaChapter *first_ch = editions[i].chapters.elem;
++                    if (first_ch->title && strlen(first_ch->title) > 0)
++                        title = first_ch->title;
++                }
++
++                if (!title) {
++                    snprintf(default_title, sizeof(default_title), "Edition %d", i + 1);
++                    title = default_title;
++                }
++
++                av_dict_set(&s->metadata, key_name, title, 0);
++            }
++        }
++
++        if (!cues_parsed_early)
++            matroska_add_index_entries(matroska);
++    }
+
+     matroska_convert_tags(s);
+
+@@ -4334,6 +4588,38 @@
+             ret = matroska_resync(matroska, matroska->resync_pos);
+     }
+
++    /* End-of-edition check, using the original (pre-rebase) container PTS. Only armed
++       when a physical seek to the edition start actually succeeded (see
++       matroska_read_header): edition_end_pts_ns stays 0 otherwise, so this is a no-op
++       for ordinary files. */
++    if (matroska->active_chapter_edition >= 0 && matroska->edition_end_pts_ns > 0 &&
++        pkt->pts != AV_NOPTS_VALUE) {
++        AVStream *st = s->streams[pkt->stream_index];
++        int64_t pkt_pts_ns = av_rescale_q(pkt->pts, st->time_base, (AVRational){1, 1000000000});
++
++        if (pkt_pts_ns >= matroska->edition_end_pts_ns) {
++            av_log(s, AV_LOG_VERBOSE,
++                   "[Matroska/Editions] End of selected edition reached (PTS %"PRId64" ns >= end %"PRId64" ns)\n",
++                   pkt_pts_ns, matroska->edition_end_pts_ns);
++            av_packet_unref(pkt);
++            return AVERROR_EOF;
++        }
++    }
++
++    /* Rebase PTS/DTS to 00:00:00 for the player timeline. Only set when a physical
++       seek to the edition start succeeded, so this matches the chapter rebasing done
++       in matroska_read_header. */
++    if (matroska->edition_start_pts_ns > 0) {
++        AVStream *st = s->streams[pkt->stream_index];
++        int64_t start_pts_tb = av_rescale_q(matroska->edition_start_pts_ns,
++                                            (AVRational){1, 1000000000},
++                                            st->time_base);
++        if (pkt->pts != AV_NOPTS_VALUE)
++            pkt->pts -= start_pts_tb;
++        if (pkt->dts != AV_NOPTS_VALUE)
++            pkt->dts -= start_pts_tb;
++    }
++
+     return 0;
+ }
+
+@@ -4346,6 +4632,15 @@
+     FFStream *const sti = ffstream(st);
+     int i, index;
+
++    /* Translate the seek target relative to the active edition's start, so it stays in
++       the same rebased timeline as read_packet()'s output. No-op when unset (0). */
++    if (matroska->edition_start_pts_ns > 0) {
++        int64_t start_pts_tb = av_rescale_q(matroska->edition_start_pts_ns,
++                                            (AVRational){1, 1000000000},
++                                            st->time_base);
++        timestamp += start_pts_tb;
++    }
++
+     /* Parse the CUES now since we need the index data to seek. */
+     if (matroska->cues_parsing_deferred > 0) {
+         matroska->cues_parsing_deferred = 0;
+@@ -4874,11 +5169,27 @@
+ };
+ #endif
+
++#define OFFSET(x) offsetof(MatroskaDemuxContext, x)
++#define FLAGS AV_OPT_FLAG_DECODING_PARAM
++
++static const AVOption matroska_options[] = {
++    { "edition", "Select edition number", OFFSET(edition_number), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 255, FLAGS },
++    { NULL },
++};
++
++static const AVClass matroska_demuxer_class = {
++    .class_name = "Matroska demuxer",
++    .item_name  = av_default_item_name,
++    .option     = matroska_options,
++    .version    = LIBAVUTIL_VERSION_INT,
++};
++
+ const FFInputFormat ff_matroska_demuxer = {
+     .p.name         = "matroska,webm",
+     .p.long_name    = NULL_IF_CONFIG_SMALL("Matroska / WebM"),
+     .p.extensions   = "mkv,mk3d,mka,mks,webm",
+     .p.mime_type    = "audio/webm,audio/x-matroska,video/webm,video/x-matroska",
++    .p.priv_class   = &matroska_demuxer_class,
+     .priv_data_size = sizeof(MatroskaDemuxContext),
+     .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
+     .read_probe     = matroska_probe,
+--
+2.31.0.windows.1

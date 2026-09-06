@@ -1,0 +1,10 @@
+[Unit]
+Description=Report a Dolby Vision blob problem to the user
+After=kodi.service
+ConditionPathExists=/run/dovi5-notify
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/coreelec/dovi5-notify
+Nice=19
+IOSchedulingClass=idle

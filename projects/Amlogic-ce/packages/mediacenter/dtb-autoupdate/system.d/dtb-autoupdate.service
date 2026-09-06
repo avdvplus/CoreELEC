@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh dtb.img from the running build by coreelec-dt-id
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/dtb-autoupdate
+
+[Install]
+WantedBy=multi-user.target

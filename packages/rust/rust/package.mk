@@ -2,12 +2,17 @@
 # Copyright (C) 2017-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="rust"
-PKG_VERSION="1.85.1"
-PKG_SHA256="0f2995ca083598757a8d9a293939e569b035799e070f419a686b0996fb94238a"
+PKG_VERSION="1.94.1"
+PKG_SHA256="4c142a625f12e3cdf716c68ae19f4f60d98ad1482627b08579b15838e95ad514"
 PKG_LICENSE="MIT"
 PKG_SITE="https://www.rust-lang.org"
 PKG_URL="https://static.rust-lang.org/dist/rustc-${PKG_VERSION}-src.tar.gz"
-PKG_DEPENDS_HOST="toolchain llvm:host"
+LLVM_CI_DOWNLOAD="${LLVM_CI_DOWNLOAD:-yes}"
+if [ "${LLVM_CI_DOWNLOAD}" = "yes" ]; then
+  PKG_DEPENDS_HOST="toolchain"
+else
+  PKG_DEPENDS_HOST="toolchain llvm:host"
+fi
 PKG_DEPENDS_UNPACK="rustc-snapshot rust-std-snapshot cargo-snapshot"
 PKG_LONGDESC="A systems programming language that prevents segfaults, and guarantees thread safety."
 PKG_TOOLCHAIN="manual"
@@ -32,28 +37,34 @@ configure_host() {
       ;;
   esac
 
+  # Save cross-compiler paths before host environment overrides them
+  local _TARGET_CC="${TOOLCHAIN}/bin/${TARGET_NAME}-gcc"
+  local _TARGET_CXX="${TOOLCHAIN}/bin/${TARGET_NAME}-g++"
+  local _HOST_CC="${TOOLCHAIN}/bin/host-gcc"
+  local _HOST_CXX="${TOOLCHAIN}/bin/host-g++"
+
   cat >${PKG_BUILD}/config.toml  <<END
-change-id = 134650
+change-id = 148671
 
 [llvm]
-download-ci-llvm = false
+download-ci-llvm = $([ "${LLVM_CI_DOWNLOAD}" = "yes" ] && echo "true" || echo "false")
 
 [target.${TARGET_NAME}]
-llvm-config = "${TOOLCHAIN}/bin/llvm-config"
-cxx = "${TARGET_PREFIX}g++"
-cc = "${TARGET_PREFIX}gcc"
+$([ "${LLVM_CI_DOWNLOAD}" != "yes" ] && echo "llvm-config = \"${TOOLCHAIN}/bin/llvm-config\"")
+cxx = "${_TARGET_CXX}"
+cc = "${_TARGET_CC}"
 
 [target.${RUST_HOST}]
-llvm-config = "${TOOLCHAIN}/bin/llvm-config"
-cxx = "${CXX}"
-cc = "${CC}"
+$([ "${LLVM_CI_DOWNLOAD}" != "yes" ] && echo "llvm-config = \"${TOOLCHAIN}/bin/llvm-config\"")
+cxx = "${_HOST_CXX}"
+cc = "${_HOST_CC}"
 
 [rust]
 rpath = true
 channel = "stable"
 codegen-tests = false
 optimize = true
-download-rustc = false
+llvm-tools = false
 
 [build]
 submodules = false
@@ -89,10 +100,10 @@ END
 
   cat >${CARGO_HOME}/config.toml <<END
 [target.${TARGET_NAME}]
-linker = "${TARGET_PREFIX}gcc"
+linker = "${_TARGET_CC}"
 
 [target.${RUST_HOST}]
-linker = "${CC}"
+linker = "${_HOST_CC}"
 rustflags = ["-C", "link-arg=-Wl,-rpath,${TOOLCHAIN}/lib"]
 
 [build]
@@ -113,7 +124,12 @@ make_host() {
   unset CPPFLAGS
   unset LDFLAGS
 
+  unset CC
+  unset CXX
+  unset AR
+
   export RUST_TARGET_PATH="${PKG_BUILD}/targets/"
+  export HOST_CMAKE="${TOOLCHAIN}/bin/cmake"
 
   python3 src/bootstrap/bootstrap.py -j ${CONCURRENCY_MAKE_LEVEL} build --stage 2 --verbose
 }

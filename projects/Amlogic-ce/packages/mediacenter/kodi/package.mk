@@ -4,12 +4,12 @@
 # Copyright (C) 2020-present Team CoreELEC (https://coreelec.tv)
 
 PKG_NAME="kodi"
-PKG_VERSION="52d06e9f77456da040fbaf6c7fe251e0c91465f4"
-PKG_SHA256="11ec750695e6ac404aac861f7b1181640452de80517f31120ac3d2f0d545b5ca"
+PKG_VERSION="e0614d7a6713369bbcfe42152223f1cdaec3dbf1"
+PKG_SHA256="a4dc38e5e4b1582991dea7e8031cd4e4d5722855173b99a6d98c61a4b371d3b5"
 PKG_LICENSE="GPL"
 PKG_SITE="http://www.kodi.tv"
 PKG_URL="https://github.com/avdvplus/xbmc/archive/${PKG_VERSION}.tar.gz"
-PKG_DEPENDS_TARGET="toolchain JsonSchemaBuilder:host TexturePacker:host Python3 zlib systemd lzo pcre swig:host libass curl fontconfig fribidi tinyxml tinyxml2 libjpeg-turbo freetype libcdio taglib libxml2 libxslt rapidjson sqlite ffmpeg crossguid libfmt lirc libfstrcmp flatbuffers:host flatbuffers libudfread spdlog obu_util libdovi"
+PKG_DEPENDS_TARGET="toolchain JsonSchemaBuilder:host TexturePacker:host Python3 zlib systemd lzo pcre swig:host libass curl fontconfig fribidi tinyxml tinyxml2 libjpeg-turbo freetype libcdio taglib libxml2 libxslt rapidjson sqlite ffmpeg crossguid libfmt lirc libfstrcmp flatbuffers:host flatbuffers libudfread spdlog obu_util libdovi hdmi-recover debug-capture dtb-autoupdate kodi-fs-maintain jre-zulu-fix inputstream.ffmpegdirect inputstream.adaptive kodi-addon-sidedata kodi-addon-tinyppi"
 PKG_DEPENDS_UNPACK="commons-lang3 commons-text groovy"
 PKG_DEPENDS_HOST="toolchain"
 PKG_LONGDESC="A free and open source cross-platform media player."
@@ -461,6 +461,16 @@ post_makeinstall_target() {
   ADDON_MANIFEST=${INSTALL}/usr/share/kodi/system/addon-manifest.xml
   xmlstarlet ed -L -d "/addons/addon[text()='service.xbmc.versioncheck']" ${ADDON_MANIFEST}
   xmlstarlet ed -L --subnode "/addons" -t elem -n "addon" -v "${ADDON_REPO_ID}" ${ADDON_MANIFEST}
+  xmlstarlet ed -L --subnode "/addons" -t elem -n "addon" -v "skin.avdvplus.estuary" ${ADDON_MANIFEST}
+  for addon in script.module.sidedata script.tinyppi; do
+    xmlstarlet ed -L -d "/addons/addon[text()='${addon}']" ${ADDON_MANIFEST}
+    xmlstarlet ed -L --subnode "/addons" -t elem -n "addon" -v "${addon}" ${ADDON_MANIFEST}
+    xmlstarlet ed -L -i "/addons/addon[text()='${addon}' and not(@optional)]" -t attr -n "optional" -v "true" ${ADDON_MANIFEST}
+    if [ "$(xmlstarlet sel -t -v "count(/addons/addon[text()='${addon}'][@optional='true'])" ${ADDON_MANIFEST})" != "1" ]; then
+      echo "ERROR: ${addon} missing or not optional in addon-manifest.xml"
+      exit 1
+    fi
+  done
   if [ -n "${DISTRO_PKG_SETTINGS}" ]; then
     xmlstarlet ed -L --subnode "/addons" -t elem -n "addon" -v "${DISTRO_PKG_SETTINGS_ID}" ${ADDON_MANIFEST}
   fi

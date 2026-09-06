@@ -1,0 +1,62 @@
+#!/bin/sh
+
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Configure a single zram device as compressed swap.
+# Reads /etc/zram.conf for the build defaults, then
+# /storage/.config/zram.conf for user overrides (the read-only rootfs
+# means /etc isn't editable at runtime).
+
+DEVICE=/dev/zram0
+SYSFS=/sys/block/zram0
+
+[ -r /etc/zram.conf ] && . /etc/zram.conf
+[ -r /storage/.config/zram.conf ] && . /storage/.config/zram.conf
+
+ZRAM_SIZE_MB="${ZRAM_SIZE_MB:-1024}"
+ZRAM_ENABLED="${ZRAM_ENABLED:-no}"
+# Swap-in readahead as log2(pages); empty = leave kernel default (3).
+ZRAM_PAGE_CLUSTER="${ZRAM_PAGE_CLUSTER:-0}"
+
+PAGE_CLUSTER_SAVED=/run/zram-swap.page-cluster
+
+start() {
+  [ "${ZRAM_ENABLED}" = "yes" ] || exit 0
+  [ -e "${SYSFS}" ] && exit 0
+
+  modprobe zram num_devices=1 || exit 1
+
+  # Prefer lz4 (faster decompression); fall back silently to the
+  # kernel default (lzo) if lz4 isn't available.
+  echo lz4 > "${SYSFS}/comp_algorithm" 2>/dev/null
+
+  echo "${ZRAM_SIZE_MB}M" > "${SYSFS}/disksize" || exit 1
+  mkswap -L zram-swap "${DEVICE}" >/dev/null || exit 1
+  swapon -p 100 "${DEVICE}" || exit 1
+
+  # zram has no seek cost, so swap-in readahead (default 2^3 = 8 pages
+  # per fault) only adds decompression latency. Stash the prior value
+  # for stop() in case other swap is ever in play.
+  if [ -n "${ZRAM_PAGE_CLUSTER}" ]; then
+    cat /proc/sys/vm/page-cluster > "${PAGE_CLUSTER_SAVED}" 2>/dev/null
+    echo "${ZRAM_PAGE_CLUSTER}" > /proc/sys/vm/page-cluster 2>/dev/null
+  fi
+}
+
+stop() {
+  [ -e "${SYSFS}" ] || exit 0
+  swapoff "${DEVICE}" 2>/dev/null
+  echo 1 > "${SYSFS}/reset" 2>/dev/null
+  rmmod zram 2>/dev/null
+
+  if [ -r "${PAGE_CLUSTER_SAVED}" ]; then
+    cat "${PAGE_CLUSTER_SAVED}" > /proc/sys/vm/page-cluster 2>/dev/null
+    rm -f "${PAGE_CLUSTER_SAVED}"
+  fi
+}
+
+case "$1" in
+  start) start ;;
+  stop)  stop  ;;
+  *)     echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

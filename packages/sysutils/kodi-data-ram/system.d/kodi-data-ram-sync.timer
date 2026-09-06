@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Kodi RAM userdata sync timer
+ConditionPathIsMountPoint=/run/kodi-data-rw
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=60
+AccuracySec=30
+
+[Install]
+WantedBy=timers.target

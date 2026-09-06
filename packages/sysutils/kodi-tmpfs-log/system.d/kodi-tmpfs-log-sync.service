@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync Kodi tmpfs log to persistent storage
+ConditionPathIsMountPoint=/run/kodi-tmp
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/lib/coreelec/kodi-tmpfs-log-sync.sh

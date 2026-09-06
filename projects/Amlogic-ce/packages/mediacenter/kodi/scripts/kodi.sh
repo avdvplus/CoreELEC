@@ -147,6 +147,11 @@ for file in $KODI_ROOT/userdata/Database/*.db; do
   fi
 done
 
+if [ -x /usr/lib/coreelec/skin-avdvplus-migration ] && \
+   [ -f $KODI_ROOT/userdata/guisettings.xml ]; then
+  /usr/lib/coreelec/skin-avdvplus-migration
+fi
+
 if [ -n "$KODI_AE_SINK" ]; then
 
   echo "KODI_AE_SINK env variable is deprecated and will be removed in the future."

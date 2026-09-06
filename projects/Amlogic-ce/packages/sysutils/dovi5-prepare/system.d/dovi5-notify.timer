@@ -1,0 +1,9 @@
+[Unit]
+Description=Report a Dolby Vision blob problem once Kodi is up
+
+[Timer]
+OnBootSec=90
+AccuracySec=15
+
+[Install]
+WantedBy=timers.target

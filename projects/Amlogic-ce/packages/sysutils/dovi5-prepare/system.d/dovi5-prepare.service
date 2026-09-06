@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare /storage/.dovi5/dovi5.ko from a user-supplied Dolby Vision blob
+After=local-fs.target dtb-autoupdate.service
+Before=opentee_linuxdriver.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/coreelec/dovi5-prepare
+
+[Install]
+WantedBy=multi-user.target

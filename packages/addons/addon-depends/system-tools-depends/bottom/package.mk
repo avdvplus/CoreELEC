@@ -13,7 +13,7 @@ PKG_TOOLCHAIN="manual"
 
 make_target() {
   cargo build \
-    --target ${TARGET_NAME} \
+    --target ${RUST_TARGET_SPEC:-${TARGET_NAME}} \
     --release \
     --locked \
     --all-features

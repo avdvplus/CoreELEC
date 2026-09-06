@@ -1,0 +1,11 @@
+[Unit]
+Description=Kodi filesystem maintenance (post-update, before Kodi starts)
+After=local-fs.target
+Before=kodi.service kodi-data-ram-setup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kodi-fs-maintain boot
+
+[Install]
+WantedBy=kodi.service

@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Kodi log sync timer
+ConditionPathIsMountPoint=/run/kodi-tmp
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=15
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target

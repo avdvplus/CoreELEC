@@ -1,0 +1,23 @@
+diff --git a/libavformat/hls.c b/libavformat/hls.c
+--- a/libavformat/hls.c
++++ b/libavformat/hls.c
+@@ -2808,6 +2808,9 @@ static const AVOption hls_options[] = {
+             ",cmfv,cmfa" // Ticket11526 www.nicovideo.jp
+             ",ec3"       // part of Ticket11435 (Elisa Viihde (Finnish online recording service))
+             ",fmp4"      // https://github.com/yt-dlp/yt-dlp/issues/12700
++            ",txt"
++            ",bin"
++            ",dat"
+         },
+         INT_MIN, INT_MAX, FLAGS},
+     {"allowed_segment_extensions", "List of file extensions that hls is allowed to access",
+@@ -2817,6 +2820,9 @@ static const AVOption hls_options[] = {
+             ",ec3"       // part of Ticket11435 (Elisa Viihde (Finnish online recording service))
+             ",fmp4"      // https://github.com/yt-dlp/yt-dlp/issues/12700
+             ",html"      // https://flash1.bogulus.cfd/
++            ",txt"
++            ",bin"
++            ",dat"
+         },
+         INT_MIN, INT_MAX, FLAGS},
+     {"extension_picky", "Be picky with all extensions matching",

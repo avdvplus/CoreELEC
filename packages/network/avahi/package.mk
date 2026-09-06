@@ -3,11 +3,17 @@
 # Copyright (C) 2016-present Team LibreELEC (https://libreelec.tv)
 
 PKG_NAME="avahi"
+# PKG_VERSION="0.8"
+# PKG_SHA256="c15e750ef7c6df595fb5f2ce10cac0fee2353649600e6919ad08ae8871e4945f"
+# PKG_LICENSE="GPL"
+# PKG_SITE="http://avahi.org/"
+# PKG_URL="https://github.com/lathiat/avahi/archive/v${PKG_VERSION}.tar.gz"
+PKG_NAME="avahi"
 PKG_VERSION="0.8"
-PKG_SHA256="c15e750ef7c6df595fb5f2ce10cac0fee2353649600e6919ad08ae8871e4945f"
+PKG_SHA256="060309d7a333d38d951bc27598c677af1796934dbd98e1024e7ad8de798fedda"
 PKG_LICENSE="GPL"
 PKG_SITE="http://avahi.org/"
-PKG_URL="https://github.com/lathiat/avahi/archive/v${PKG_VERSION}.tar.gz"
+PKG_URL="https://deb.debian.org/debian/pool/main/a/avahi/avahi_${PKG_VERSION}.orig.tar.gz"
 PKG_DEPENDS_TARGET="toolchain expat libdaemon dbus connman gettext"
 PKG_LONGDESC="Service Discovery for Linux using mDNS/DNS-SD, compatible with Bonjour."
 PKG_TOOLCHAIN="configure"
@@ -56,8 +62,15 @@ PKG_CONFIGURE_OPTS_TARGET="py_cv_mod_gtk_=yes \
                            --with-avahi-group=avahi \
                            --disable-nls"
 
+# pre_configure_target() {
+#   NOCONFIGURE=1 ./autogen.sh
+# }
+
 pre_configure_target() {
-  NOCONFIGURE=1 ./autogen.sh
+  # Prevent regeneration of autotools files
+  touch ${PKG_BUILD}/aclocal.m4
+  touch ${PKG_BUILD}/Makefile.in
+  find ${PKG_BUILD} -name "Makefile.in" -exec touch {} \;
 }
 
 post_configure_target() {

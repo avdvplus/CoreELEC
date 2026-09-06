@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the post-boot sanity log once after boot
+
+[Timer]
+OnBootSec=90
+AccuracySec=15
+
+[Install]
+WantedBy=timers.target

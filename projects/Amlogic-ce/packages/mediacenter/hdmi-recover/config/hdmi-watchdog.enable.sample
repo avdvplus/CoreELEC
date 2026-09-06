@@ -1,0 +1,9 @@
+Rename this file to hdmi-watchdog.enable to start the HDMI CTS telemetry
+monitor at boot. It is off by default because it polls every two seconds
+and writes /storage/.kodi/temp/hdmi-watchdog.log for the life of the box.
+
+  mv /storage/.config/hdmi-watchdog.enable.sample /storage/.config/hdmi-watchdog.enable
+  systemctl start hdmi-watchdog
+
+The manual tools hdmi-recover, hdmi-phy-cycle and hdmi-state-dump are always
+installed and are unaffected by this file.

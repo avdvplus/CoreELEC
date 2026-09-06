@@ -1,0 +1,45 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+MARKER=/run/dovi5-notify
+TITLE="Dolby Vision unavailable"
+DURATION=15000
+
+[ -f "$MARKER" ] || exit 0
+
+i=0
+while [ "$i" -lt 18 ]; do
+  systemctl is-active --quiet kodi.service && break
+  sleep 10
+  i=$((i + 1))
+done
+if ! systemctl is-active --quiet kodi.service; then
+  echo "dovi5-notify: kodi did not start within 180s; not reporting" >&2
+  exit 0
+fi
+
+read -r REASON < "$MARKER" 2>/dev/null
+
+case "$REASON" in
+  missing)
+    MSG="dovi5.ko was not found. Copy it to the appropriate location. Details in /storage/dovi5.log"
+    ;;
+  invalid)
+    MSG="No usable dovi5.ko was found. Details in /storage/dovi5.log"
+    ;;
+  blocked)
+    MSG="Dolby Vision support could not be prepared. Details in /storage/dovi5.log"
+    ;;
+  stale)
+    MSG="Your new dovi5.ko was rejected. The previous one is still in use. Details in /storage/dovi5.log"
+    ;;
+  *)
+    rm -f "$MARKER"
+    exit 0
+    ;;
+esac
+
+if kodi-send --host=127.0.0.1 -a "Notification(${TITLE},${MSG},${DURATION})" >/dev/null 2>&1; then
+  rm -f "$MARKER"
+fi
+exit 0

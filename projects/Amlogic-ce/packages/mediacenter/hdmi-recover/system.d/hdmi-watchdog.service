@@ -1,0 +1,12 @@
+[Unit]
+Description=HDMI link telemetry monitor (CTS baseline tracking, no wire writes)
+ConditionPathExists=/storage/.config/hdmi-watchdog.enable
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/hdmi-watchdog
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
